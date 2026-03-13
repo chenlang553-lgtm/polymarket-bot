@@ -61,6 +61,13 @@
 - Added CLI `--profile` selection for `inspect`, `run`, and `report`
 - Extended reports with `strategyProfile` summaries for version-to-version comparison
 
+## v1.20.0 - 2026-03-14
+
+- Rebuilt Polymarket outcome pricing to match the provided JS market-data logic
+- Market websocket now consumes only `book` events and computes `bestBid`/`bestAsk` from the full level set
+- Snapshot `yes_price` / `no_price` now come directly from the current book state via `midpoint -> lastTradePrice -> bestBid -> bestAsk -> null`
+- Execution pricing now uses `max(signalPrice, bestAsk)` when `bestAsk` exists
+
 ## v1.19.0 - 2026-03-14
 
 - Added per-outcome cached market prices so `yes_price` and `no_price` no longer flap to `None` on brief websocket gaps

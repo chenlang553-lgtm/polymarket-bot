@@ -13,6 +13,7 @@ from polymarket_bot.replay import format_replay_line, run_replay
 from polymarket_bot.report import build_report
 from polymarket_bot.strategy import StrategyEngine, default_size_buckets
 from polymarket_bot.validate import validate_config
+from polymarket_bot.ws import _parse_book_like_message
 
 
 def _build_state(prices):
@@ -187,7 +188,37 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(trade_book.execution_price(), 0.41)
 
         bid_only_book = BestBidAsk(asset_id="yes", bid=0.39, ask=None)
-        self.assertIsNone(bid_only_book.execution_price())
+        self.assertEqual(bid_only_book.execution_price(), 0.39)
+
+    def test_execution_price_uses_max_of_signal_and_best_ask(self):
+        book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, last_trade_price=0.40)
+        self.assertEqual(book.execution_price_for(0.46), 0.47)
+        self.assertEqual(book.execution_price_for(0.52), 0.52)
+
+    def test_book_message_uses_true_best_bid_and_ask(self):
+        book = _parse_book_like_message(
+            {
+                "event_type": "book",
+                "asset_id": "yes",
+                "bids": [
+                    {"price": "0.41", "size": "5"},
+                    {"price": "0.45", "size": "2"},
+                    {"price": "0.43", "size": "4"},
+                ],
+                "asks": [
+                    {"price": "0.52", "size": "3"},
+                    {"price": "0.49", "size": "7"},
+                    {"price": "0.51", "size": "1"},
+                ],
+                "last_trade_price": "0.48",
+                "tick_size": "0.01",
+                "timestamp": "123",
+            },
+            "yes",
+        )
+        self.assertEqual(book.bid, 0.45)
+        self.assertEqual(book.ask, 0.49)
+        self.assertEqual(book.last_trade_price, 0.48)
 
     def test_archive_writer_appends_jsonl_records(self):
         handle, path = tempfile.mkstemp()

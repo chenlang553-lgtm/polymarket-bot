@@ -4,7 +4,7 @@ import logging
 
 import websockets
 
-from .models import BestBidAsk, PriceTick
+from .models import BestBidAsk, OrderBookLevel, PriceTick
 
 
 LOGGER = logging.getLogger(__name__)
@@ -103,8 +103,7 @@ async def market_book_stream(asset_id):
                     for message in messages:
                         if not isinstance(message, dict):
                             continue
-                        event_type = message.get("event_type")
-                        if event_type not in {"book", "price_change", "best_bid_ask"}:
+                        if message.get("event_type") != "book":
                             continue
                         yield _parse_book_like_message(message, asset_id)
         except Exception as exc:
@@ -119,29 +118,21 @@ async def _heartbeat(websocket, payload):
 
 
 def _parse_book_like_message(message, asset_id):
-    if message.get("event_type") == "best_bid_ask":
-        return BestBidAsk(
-            asset_id=asset_id,
-            bid=_parse_optional_float(message.get("best_bid")),
-            ask=_parse_optional_float(message.get("best_ask")),
-            bid_size=float(message.get("best_bid_size", 0.0) or 0.0),
-            ask_size=float(message.get("best_ask_size", 0.0) or 0.0),
-            timestamp_ms=int(message.get("timestamp", 0) or 0),
-            last_trade_price=_parse_last_trade_price(message),
-        )
-
-    bids = message.get("bids", [])
-    asks = message.get("asks", [])
-    best_bid = bids[0] if bids else {}
-    best_ask = asks[0] if asks else {}
+    bids = _parse_levels(message.get("bids", []))
+    asks = _parse_levels(message.get("asks", []))
+    best_bid_level = _best_bid_level(bids)
+    best_ask_level = _best_ask_level(asks)
     return BestBidAsk(
         asset_id=asset_id,
-        bid=_parse_optional_float(best_bid.get("price")),
-        ask=_parse_optional_float(best_ask.get("price")),
-        bid_size=float(best_bid.get("size", 0.0) or 0.0),
-        ask_size=float(best_ask.get("size", 0.0) or 0.0),
+        bid=None if best_bid_level is None else best_bid_level.price,
+        ask=None if best_ask_level is None else best_ask_level.price,
+        bid_size=0.0 if best_bid_level is None else best_bid_level.size,
+        ask_size=0.0 if best_ask_level is None else best_ask_level.size,
         timestamp_ms=int(message.get("timestamp", 0) or 0),
         last_trade_price=_parse_last_trade_price(message),
+        bids=bids,
+        asks=asks,
+        tick_size=_parse_optional_float(message.get("tick_size")),
     )
 
 
@@ -157,3 +148,32 @@ def _parse_last_trade_price(message):
         if value not in (None, ""):
             return float(value)
     return None
+
+
+def _parse_levels(raw_levels):
+    levels = []
+    for item in raw_levels or []:
+        if isinstance(item, dict):
+            price = _parse_optional_float(item.get("price"))
+            size = _parse_optional_float(item.get("size"))
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            price = _parse_optional_float(item[0])
+            size = _parse_optional_float(item[1])
+        else:
+            continue
+        if price is None:
+            continue
+        levels.append(OrderBookLevel(price, 0.0 if size is None else size))
+    return levels
+
+
+def _best_bid_level(levels):
+    if not levels:
+        return None
+    return max(levels, key=lambda level: level.price)
+
+
+def _best_ask_level(levels):
+    if not levels:
+        return None
+    return min(levels, key=lambda level: level.price)
