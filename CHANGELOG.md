@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.6.0 - 2026-03-13
+
+- Added `market_state.jsonl` recording for active-window state snapshots and window lifecycle events
+- Added `replay` CLI command to inspect archived state and activity flow offline
+- Improved production debugging by separating state replay data from window summaries and execution events
+
 ## v1.5.0 - 2026-03-13
 
 - Added named config `profiles` for controlled experiment overrides

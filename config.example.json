@@ -50,7 +50,8 @@
     "level": "INFO",
     "active_only_last_seconds": 60,
     "window_close_path": "window_close.jsonl",
-    "activity_path": "activity.jsonl"
+    "activity_path": "activity.jsonl",
+    "market_state_path": "market_state.jsonl"
   },
   "profiles": {
     "main": {},

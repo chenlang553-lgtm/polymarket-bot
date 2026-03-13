@@ -28,6 +28,7 @@ class TradingApplication:
         self.executor = build_executor(config.execution, config.wallet)
         self.archive = WindowArchiveWriter(config.logging.window_close_path)
         self.activity_archive = JsonlWriter(config.logging.activity_path)
+        self.state_archive = JsonlWriter(config.logging.market_state_path)
         self._latest_book = None
         self._latest_trade_imbalance = 0.0
         self._queue = asyncio.Queue()
@@ -203,6 +204,28 @@ class TradingApplication:
             _fmt(snapshot.edge_no),
             position,
         )
+        self.state_archive.write(
+            {
+                "recordType": "state",
+                "strategyVersion": self.config.execution.strategy_version,
+                "strategyProfile": self.config.execution.strategy_profile,
+                "strategyType": self.config.execution.strategy_type,
+                "marketSlug": self.market.slug,
+                "eventAtMs": int(now.timestamp() * 1000),
+                "timeToExpirySec": int(snapshot.tau_seconds),
+                "spot": self.roll.last_price,
+                "x_t": snapshot.x_t,
+                "yesBid": yes_bid,
+                "yesAsk": yes_ask,
+                "noBid": no_bid,
+                "noAsk": no_ask,
+                "fairYes": snapshot.fair_yes,
+                "fairNo": snapshot.fair_no,
+                "edgeYes": snapshot.edge_yes,
+                "edgeNo": snapshot.edge_no,
+                "position": position,
+            }
+        )
 
     def _log_waiting(self, now=None):
         now = now or datetime.now(timezone.utc)
@@ -263,6 +286,19 @@ class TradingApplication:
             self.market.end_time.isoformat() if self.market.end_time else "unknown",
             self.config.market.trade_side.value,
         )
+        self.state_archive.write(
+            {
+                "recordType": "window",
+                "phase": "activated",
+                "strategyVersion": self.config.execution.strategy_version,
+                "strategyProfile": self.config.execution.strategy_profile,
+                "strategyType": self.config.execution.strategy_type,
+                "marketSlug": self.market.slug,
+                "eventAtMs": int(datetime.now(timezone.utc).timestamp() * 1000),
+                "startTime": self.market.start_time.isoformat() if self.market.start_time else None,
+                "endTime": self.market.end_time.isoformat() if self.market.end_time else None,
+            }
+        )
 
     def _roll_to_next_window(self, now):
         if not self.config.market.auto_roll_windows:
@@ -298,6 +334,21 @@ class TradingApplication:
         }
         record.update(summary)
         self.archive.write(record)
+        self.state_archive.write(
+            {
+                "recordType": "window",
+                "phase": "closed",
+                "strategyVersion": self.config.execution.strategy_version,
+                "strategyProfile": self.config.execution.strategy_profile,
+                "strategyType": self.config.execution.strategy_type,
+                "marketSlug": self.market.slug,
+                "eventAtMs": int(now.timestamp() * 1000),
+                "startTime": self.market.start_time.isoformat() if self.market.start_time else None,
+                "endTime": self.market.end_time.isoformat() if self.market.end_time else None,
+                "finalDirection": final_direction,
+                "realizedPnl": record["realizedPnl"],
+            }
+        )
         LOGGER.info(
             "WINDOW window=%s phase=closed winner=%s realized_pnl=%.4f fills=%s archive=%s",
             self.market.slug or self.market.condition_id,

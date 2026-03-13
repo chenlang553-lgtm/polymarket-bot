@@ -39,3 +39,7 @@ def load_window_records(path):
                 continue
             records.append(json.loads(line))
     return records
+
+
+def load_jsonl_records(path):
+    return load_window_records(path)

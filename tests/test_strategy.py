@@ -9,6 +9,7 @@ from polymarket_bot.config import StrategyConfig, load_config
 from polymarket_bot.gamma import build_market_slug
 from polymarket_bot.market_state import RollingState
 from polymarket_bot.models import BestBidAsk, OutcomeSide, Position, SignalAction
+from polymarket_bot.replay import format_replay_line, run_replay
 from polymarket_bot.report import build_report
 from polymarket_bot.strategy import StrategyEngine, default_size_buckets
 
@@ -92,6 +93,35 @@ class StrategyTests(unittest.TestCase):
             with open(path) as saved:
                 payload = json.loads(saved.readline())
             self.assertEqual(payload["action"], "open")
+        finally:
+            os.unlink(path)
+
+    def test_replay_formats_state_records(self):
+        line = format_replay_line(
+            {
+                "recordType": "state",
+                "marketSlug": "btc-updown-5m-1773406800",
+                "timeToExpirySec": 12,
+                "spot": 82134.25,
+                "yesBid": 0.46,
+                "yesAsk": 0.47,
+                "fairYes": 0.512,
+                "fairNo": 0.488,
+                "edgeYes": 0.042,
+                "edgeNo": -0.052,
+                "position": "flat",
+            }
+        )
+        self.assertTrue(line.startswith("STATE window=btc-updown-5m-1773406800"))
+
+    def test_run_replay_reads_jsonl_records(self):
+        handle, path = tempfile.mkstemp()
+        os.close(handle)
+        try:
+            writer = JsonlWriter(path)
+            writer.write({"recordType": "window", "marketSlug": "x", "phase": "activated", "startTime": "a", "endTime": "b"})
+            output = run_replay(path)
+            self.assertIn("WINDOW window=x phase=activated", output)
         finally:
             os.unlink(path)
 

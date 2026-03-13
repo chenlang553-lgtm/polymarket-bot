@@ -58,6 +58,12 @@ Generate a rollup report from archived `window_close` records:
 polymarket-bot report --config config.json
 ```
 
+Replay archived market-state snapshots:
+
+```bash
+polymarket-bot replay --config config.json --limit 100
+```
+
 Run a named experiment profile from the same config:
 
 ```bash
@@ -72,6 +78,7 @@ polymarket-bot run --config config.json --profile tight_edge
 - It prints `STRATEGY ...` only when an open, close, or flip action is triggered.
 - It appends one `window_close` JSON record per completed 5 minute market to `window_close.jsonl` by default.
 - It appends per-action execution events to `activity.jsonl` by default for later debugging and replay.
+- It appends per-second active-window state snapshots and window lifecycle markers to `market_state.jsonl`.
 - `report` summarizes archived windows by overall performance, strategy type, and UTC day.
 - You can define `profiles` in the config to override strategy, execution, logging, or market fields for controlled experiments.
 

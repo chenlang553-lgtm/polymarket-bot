@@ -92,11 +92,12 @@ class WalletConfig:
 
 
 class LoggingConfig:
-    def __init__(self, level="INFO", active_only_last_seconds=60, window_close_path="window_close.jsonl", activity_path="activity.jsonl"):
+    def __init__(self, level="INFO", active_only_last_seconds=60, window_close_path="window_close.jsonl", activity_path="activity.jsonl", market_state_path="market_state.jsonl"):
         self.level = level
         self.active_only_last_seconds = active_only_last_seconds
         self.window_close_path = window_close_path
         self.activity_path = activity_path
+        self.market_state_path = market_state_path
 
 
 class AppConfig:
