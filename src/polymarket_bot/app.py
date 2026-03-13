@@ -6,7 +6,7 @@ import logging
 from .archive import JsonlWriter, WindowArchiveWriter
 from .config import AppConfig
 from .execution import build_executor
-from .gamma import current_window_start, next_window_start, resolve_market, resolve_market_for_window
+from .gamma import current_window_start, resolve_market, resolve_market_for_window
 from .market_state import RollingState
 from .models import BestBidAsk, OutcomeSide, RuntimeHealth, RuntimeState, SignalAction, WindowStats
 from .strategy import StrategyEngine, default_size_buckets
@@ -409,7 +409,7 @@ class TradingApplication:
                 pass
             return
         self._archive_window(now)
-        next_start = next_window_start(now)
+        next_start = self.market.end_time or current_window_start(now)
         next_market = resolve_market_for_window(self.config.market, next_start)
         self._ensure_market_times(next_market)
         if self._book_task is not None:

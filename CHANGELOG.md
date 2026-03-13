@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.15.0 - 2026-03-14
+
+- Fixed 5-minute window rollover to use the current market end time instead of skipping ahead one extra window
+
 ## v1.14.0 - 2026-03-13
 
 - Enriched `collecting` phase logs with up/down prices, `x_t`, and current position
