@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.13.0 - 2026-03-13
+
+- Added explicit market metadata logs on window activation for token-side debugging
+
 ## v1.12.0 - 2026-03-13
 
 - Added `--iteration` runtime option to route logs and JSONL data into per-iteration directories

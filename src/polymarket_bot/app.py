@@ -356,6 +356,15 @@ class TradingApplication:
             self.market.end_time.isoformat() if self.market.end_time else "unknown",
             self.config.market.trade_side.value,
         )
+        LOGGER.info(
+            "MARKET window=%s question=%s trade_side=%s active_asset_id=%s yes_token_id=%s no_token_id=%s",
+            self.market.slug or self.market.condition_id,
+            self.market.question,
+            self.config.market.trade_side.value,
+            self._active_asset_id(),
+            self.market.yes_token_id,
+            self.market.no_token_id,
+        )
         self.state_archive.write(
             {
                 "recordType": "window",
