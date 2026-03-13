@@ -164,6 +164,8 @@ class RuntimeHealth:
         self.last_book_at_ms = 0
         self.last_health_log_at_ms = 0
         self.last_error = ""
+        self.supervisor_restarts = 0
+        self.shutdowns = 0
 
 
 class WindowStats:

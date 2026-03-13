@@ -105,7 +105,9 @@ class StrategyTests(unittest.TestCase):
                                 "activity_path": "activity.jsonl",
                                 "market_state_path": "market_state.jsonl",
                                 "health_log_interval_seconds": 15,
-                                "stale_data_threshold_seconds": 10
+                                "stale_data_threshold_seconds": 10,
+                                "shutdown_grace_seconds": 5,
+                                "supervisor_restart_backoff_seconds": 2
                             }
                         }
                     )

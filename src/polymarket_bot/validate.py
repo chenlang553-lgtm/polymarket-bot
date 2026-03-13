@@ -33,6 +33,10 @@ def validate_config(config):
         errors.append("logging.health_log_interval_seconds must be positive")
     if config.logging.stale_data_threshold_seconds <= 0:
         errors.append("logging.stale_data_threshold_seconds must be positive")
+    if config.logging.shutdown_grace_seconds <= 0:
+        errors.append("logging.shutdown_grace_seconds must be positive")
+    if config.logging.supervisor_restart_backoff_seconds <= 0:
+        errors.append("logging.supervisor_restart_backoff_seconds must be positive")
     if not config.price_feed.symbol:
         errors.append("price_feed.symbol is required")
 

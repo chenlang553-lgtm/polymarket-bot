@@ -39,17 +39,14 @@ class TradingApplication:
         self._book_task = None
         self._latest_spot_price = None
         self._window_stats = WindowStats()
+        self._running = True
+        self._tasks = {}
 
     async def run(self):
         self._startup_check()
-        producers = [
-            asyncio.create_task(self._consume_prices()),
-        ]
-        self._book_task = asyncio.create_task(self._consume_books(self._active_asset_id()))
-        producers.append(self._book_task)
-        producers.append(asyncio.create_task(self._health_loop()))
+        self._start_background_tasks()
         try:
-            while True:
+            while self._running:
                 kind, payload = await self._queue.get()
                 if kind == "price":
                     self._handle_price(payload)
@@ -62,15 +59,16 @@ class TradingApplication:
                     self._handle_stream_event("price", payload)
                 elif kind == "book_stream_event":
                     self._handle_stream_event("book", payload)
+                elif kind == "task_failure":
+                    await self._handle_task_failure(payload)
+                elif kind == "shutdown":
+                    await self._shutdown(payload.get("reason", "requested"))
                 if self._latest_book is not None and self.roll.open_price is not None:
                     self._tick()
                 else:
                     self._log_waiting()
         finally:
-            for task in producers:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+            await self._cancel_background_tasks()
 
     def _startup_check(self):
         validation = validate_config(self.config)
@@ -97,7 +95,7 @@ class TradingApplication:
                 await self._queue.put(("price", tick))
         except Exception as exc:
             await self._queue.put(("price_stream_event", {"event": "error", "message": str(exc)}))
-            raise
+            await self._queue.put(("task_failure", {"task": "prices", "error": str(exc)}))
 
     async def _consume_books(self, asset_id):
         await self._queue.put(("book_stream_event", {"event": "connect", "asset_id": asset_id}))
@@ -106,7 +104,7 @@ class TradingApplication:
                 await self._queue.put(("book", book))
         except Exception as exc:
             await self._queue.put(("book_stream_event", {"event": "error", "message": str(exc), "asset_id": asset_id}))
-            raise
+            await self._queue.put(("task_failure", {"task": "books", "error": str(exc), "asset_id": asset_id}))
 
     def _handle_price(self, tick):
         from .models import PriceTick
@@ -134,7 +132,7 @@ class TradingApplication:
 
     async def _health_loop(self):
         interval = max(5, int(self.config.logging.health_log_interval_seconds))
-        while True:
+        while self._running:
             await asyncio.sleep(interval)
             self._log_health()
 
@@ -364,8 +362,13 @@ class TradingApplication:
     def _roll_to_next_window(self, now):
         if not self.config.market.auto_roll_windows:
             self._archive_window(now)
-            LOGGER.info("market window is over")
-            raise SystemExit(0)
+            awaitable = self._queue.put(("shutdown", {"reason": "market_window_over"}))
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(awaitable)
+            except RuntimeError:
+                pass
+            return
         self._archive_window(now)
         next_start = next_window_start(now)
         next_market = resolve_market_for_window(self.config.market, next_start)
@@ -374,6 +377,7 @@ class TradingApplication:
             self._book_task.cancel()
         self._reset_for_market(next_market)
         self._book_task = asyncio.create_task(self._consume_books(self._active_asset_id()))
+        self._tasks["books"] = self._book_task
 
     def _archive_window(self, now):
         final_direction = self._infer_final_direction()
@@ -476,6 +480,52 @@ class TradingApplication:
             _fmt_int(book_lag_ms),
             self.health.last_error or "none",
         )
+
+    def _start_background_tasks(self):
+        self._tasks["prices"] = asyncio.create_task(self._consume_prices())
+        self._book_task = asyncio.create_task(self._consume_books(self._active_asset_id()))
+        self._tasks["books"] = self._book_task
+        self._tasks["health"] = asyncio.create_task(self._health_loop())
+
+    async def _handle_task_failure(self, payload):
+        task_name = payload.get("task", "unknown")
+        error = payload.get("error", "unknown")
+        LOGGER.error("SUPERVISOR task=%s action=restart error=%s", task_name, error)
+        self.health.last_error = "%s:%s" % (task_name, error)
+        self.health.supervisor_restarts += 1
+        await asyncio.sleep(max(1, int(self.config.logging.supervisor_restart_backoff_seconds)))
+        if not self._running:
+            return
+        if task_name == "prices":
+            self._tasks["prices"] = asyncio.create_task(self._consume_prices())
+        elif task_name == "books":
+            self._tasks["books"] = asyncio.create_task(self._consume_books(self._active_asset_id()))
+            self._book_task = self._tasks["books"]
+
+    async def _shutdown(self, reason):
+        if not self._running:
+            return
+        self._running = False
+        self.health.shutdowns += 1
+        now = datetime.now(timezone.utc)
+        self.state_archive.write(
+            {
+                "recordType": "shutdown",
+                "eventAtMs": int(now.timestamp() * 1000),
+                "marketSlug": self.market.slug,
+                "reason": reason,
+                "strategyVersion": self.config.execution.strategy_version,
+                "strategyProfile": self.config.execution.strategy_profile,
+            }
+        )
+        LOGGER.info("SHUTDOWN reason=%s grace_seconds=%s", reason, self.config.logging.shutdown_grace_seconds)
+
+    async def _cancel_background_tasks(self):
+        for name, task in list(self._tasks.items()):
+            task.cancel()
+        for name, task in list(self._tasks.items()):
+            with suppress(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=self.config.logging.shutdown_grace_seconds)
 
 
 

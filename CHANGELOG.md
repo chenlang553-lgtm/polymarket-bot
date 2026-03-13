@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.9.0 - 2026-03-13
+
+- Added supervisor-style restarts for failed background stream tasks
+- Added explicit `shutdown` archive events and structured shutdown logging
+- Added config for shutdown grace period and restart backoff
+
 ## v1.8.0 - 2026-03-13
 
 - Added periodic `HEALTH` logs with update counts, reconnect counts, and stale-data lag metrics

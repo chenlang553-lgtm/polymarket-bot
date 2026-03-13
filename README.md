@@ -89,6 +89,7 @@ polymarket-bot run --config config.json --profile tight_edge
 - You can define `profiles` in the config to override strategy, execution, logging, or market fields for controlled experiments.
 - `validate` checks configuration consistency before the bot starts.
 - It emits periodic `HEALTH` logs with stream update counts, reconnect counts, and stale-data lag metrics.
+- It handles task failures with supervisor-style restarts and records explicit `SHUTDOWN` events on exit.
 
 ## Notes
 
