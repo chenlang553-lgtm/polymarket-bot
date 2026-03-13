@@ -53,6 +53,24 @@ class BestBidAsk:
             return 0.0
         return (self.bid_size - self.ask_size) / total
 
+    def is_valid(self, max_spread=None, min_size=0.0) -> bool:
+        if self.bid is None or self.ask is None:
+            return False
+        if self.bid <= 0.0 or self.ask <= 0.0 or self.bid >= self.ask:
+            return False
+        if self.bid <= 0.01 and self.ask >= 0.99:
+            return False
+        if max_spread is not None and self.spread is not None and self.spread > max_spread:
+            return False
+        if min_size > 0 and self.top_size < min_size:
+            return False
+        return True
+
+    def effective_price(self, max_spread=None, min_size=0.0):
+        if not self.is_valid(max_spread=max_spread, min_size=min_size):
+            return None
+        return self.midpoint
+
     def merged_with(self, fallback):
         if fallback is None:
             return self
@@ -113,6 +131,8 @@ class StrategySnapshot:
         self,
         fair_yes,
         fair_no,
+        yes_price,
+        no_price,
         edge_yes,
         edge_no,
         sigma_10,
@@ -131,6 +151,8 @@ class StrategySnapshot:
     ):
         self.fair_yes = fair_yes
         self.fair_no = fair_no
+        self.yes_price = yes_price
+        self.no_price = no_price
         self.edge_yes = edge_yes
         self.edge_no = edge_no
         self.sigma_10 = sigma_10

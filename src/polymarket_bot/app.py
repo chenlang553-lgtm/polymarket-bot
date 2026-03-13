@@ -31,13 +31,12 @@ class TradingApplication:
         self.archive = WindowArchiveWriter(config.logging.window_close_path)
         self.activity_archive = JsonlWriter(config.logging.activity_path)
         self.state_archive = JsonlWriter(config.logging.market_state_path)
-        self._latest_book = None
-        self._last_usable_book = None
+        self._latest_books = {}
+        self._last_usable_books = {}
         self._latest_trade_imbalance = 0.0
         self._queue = asyncio.Queue()
         self._last_status_second = None
         self._last_wait_log_second = None
-        self._book_task = None
         self._latest_spot_price = None
         self._window_stats = WindowStats()
         self._running = True
@@ -52,9 +51,9 @@ class TradingApplication:
                 if kind == "price":
                     self._handle_price(payload)
                 elif kind == "book":
-                    if payload.asset_id == self._active_asset_id():
-                        self._latest_book = payload
-                        self._maybe_cache_book(payload)
+                    if payload.asset_id in self._market_asset_ids():
+                        self._latest_books[payload.asset_id] = payload
+                        self._maybe_cache_book(payload.asset_id, payload)
                         self.health.book_updates += 1
                         self.health.last_book_at_ms = payload.timestamp_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
                 elif kind == "price_stream_event":
@@ -65,7 +64,7 @@ class TradingApplication:
                     await self._handle_task_failure(payload)
                 elif kind == "shutdown":
                     await self._shutdown(payload.get("reason", "requested"))
-                if self._latest_book is not None and self.roll.open_price is not None:
+                if self._has_any_book() and self.roll.open_price is not None:
                     self._tick()
                 else:
                     self._log_waiting()
@@ -110,7 +109,7 @@ class TradingApplication:
                 await self._queue.put(("book", book))
         except Exception as exc:
             await self._queue.put(("book_stream_event", {"event": "error", "message": str(exc), "asset_id": asset_id}))
-            await self._queue.put(("task_failure", {"task": "books", "error": str(exc), "asset_id": asset_id}))
+            await self._queue.put(("task_failure", {"task": "book:%s" % asset_id, "error": str(exc), "asset_id": asset_id}))
 
     def _handle_price(self, tick):
         from .models import PriceTick
@@ -160,18 +159,20 @@ class TradingApplication:
 
         snapshot = self.strategy.compute_snapshot(
             state=self.roll,
-            book_yes=self._effective_book(now),
+            book_yes=self._effective_book(self.market.yes_token_id, now),
+            book_no=self._effective_book(self.market.no_token_id, now),
             tau_seconds=tau_seconds,
             trade_imbalance=self._latest_trade_imbalance,
             previous_fair_yes=None if self.state.last_snapshot is None else self.state.last_snapshot.fair_yes,
         )
         self.state.last_snapshot = snapshot
-        current_book = self._effective_book(now)
-        self._window_stats.last_yes_ask = current_book.ask
-        self._window_stats.last_yes_bid = current_book.bid
+        yes_book = self._effective_book(self.market.yes_token_id, now)
+        no_book = self._effective_book(self.market.no_token_id, now)
+        self._window_stats.last_yes_ask = snapshot.yes_price
+        self._window_stats.last_yes_bid = snapshot.no_price
         self._window_stats.last_fair_yes = snapshot.fair_yes
         self._log_status(now, snapshot)
-        signal = self.strategy.evaluate(snapshot, current_book, self.state.position)
+        signal = self.strategy.evaluate(snapshot, yes_book, no_book, self.state.position)
         if signal.action == SignalAction.HOLD:
             return
 
@@ -205,9 +206,11 @@ class TradingApplication:
             self._window_stats.mark_position(None, 0.0)
 
         if signal.action in {SignalAction.OPEN, SignalAction.FLIP}:
-            ask_price = current_book.ask if signal.side == OutcomeSide.YES else max(0.001, 1.0 - (current_book.bid or 0.0))
+            entry_price = snapshot.yes_price if signal.side == OutcomeSide.YES else snapshot.no_price
+            if entry_price is None:
+                return
             self._window_stats.record_action(signal.action.value.upper(), signal.size, self.config.execution.strategy_type, "filled")
-            self._window_stats.record_fill(signal.side, signal.size, ask_price)
+            self._window_stats.record_fill(signal.side, signal.size, entry_price)
             self._window_stats.mark_execution_event()
             self._write_activity_event(
                 now=now,
@@ -215,24 +218,24 @@ class TradingApplication:
                 action=signal.action.value,
                 side=signal.side,
                 size=signal.size,
-                price=ask_price,
+                price=entry_price,
                 reason=signal.reason,
                 snapshot=snapshot,
             )
             LOGGER.info(
-                "STRATEGY action=%s side=%s size=%.4f reason=%s tau=%.1f ask=%.4f fair_yes=%.3f fair_no=%.3f edge_yes=%s edge_no=%s",
+                "STRATEGY action=%s side=%s size=%.4f reason=%s tau=%.1f price=%.4f fair_yes=%.3f fair_no=%.3f edge_yes=%s edge_no=%s",
                 signal.action.value,
                 signal.side.value,
                 signal.size,
                 signal.reason,
                 tau_seconds,
-                ask_price,
+                entry_price,
                 snapshot.fair_yes,
                 snapshot.fair_no,
                 _fmt(snapshot.edge_yes),
                 _fmt(snapshot.edge_no),
             )
-            self.state.position = self.executor.open_position(self.market, signal, ask_price)
+            self.state.position = self.executor.open_position(self.market, signal, entry_price)
             self._window_stats.mark_position(signal.side, signal.size)
 
     def _log_status(self, now, snapshot):
@@ -241,13 +244,6 @@ class TradingApplication:
             return
         self._last_status_second = current_second
 
-        yes_bid = self._latest_book.bid
-        yes_ask = self._latest_book.ask
-        effective_book = self._effective_book(now)
-        yes_bid = effective_book.bid
-        yes_ask = effective_book.ask
-        no_bid = None if yes_ask is None else max(0.0, 1.0 - yes_ask)
-        no_ask = None if yes_bid is None else max(0.0, 1.0 - yes_bid)
         position = "flat"
         if self.state.position is not None:
             position = "%s@%.4f x %.4f" % (
@@ -257,15 +253,13 @@ class TradingApplication:
             )
 
         LOGGER.info(
-            "STATUS window=%s tau=%ss spot=%.2f x_t=%.6f yes_bid=%s yes_ask=%s no_bid=%s no_ask=%s fair_yes=%.3f fair_no=%.3f edge_yes=%s edge_no=%s pos=%s",
+            "STATUS window=%s tau=%ss spot=%.2f x_t=%.6f yes_price=%s no_price=%s fair_yes=%.3f fair_no=%.3f edge_yes=%s edge_no=%s pos=%s",
             self.market.slug or self.market.condition_id,
             int(snapshot.tau_seconds),
             self.roll.last_price,
             snapshot.x_t,
-            _fmt(yes_bid),
-            _fmt(yes_ask),
-            _fmt(no_bid),
-            _fmt(no_ask),
+            _fmt(snapshot.yes_price),
+            _fmt(snapshot.no_price),
             snapshot.fair_yes,
             snapshot.fair_no,
             _fmt(snapshot.edge_yes),
@@ -283,10 +277,8 @@ class TradingApplication:
                 "timeToExpirySec": int(snapshot.tau_seconds),
                 "spot": self.roll.last_price,
                 "x_t": snapshot.x_t,
-                "yesBid": yes_bid,
-                "yesAsk": yes_ask,
-                "noBid": no_bid,
-                "noAsk": no_ask,
+                "yesPrice": snapshot.yes_price,
+                "noPrice": snapshot.no_price,
                 "fairYes": snapshot.fair_yes,
                 "fairNo": snapshot.fair_no,
                 "edgeYes": snapshot.edge_yes,
@@ -309,11 +301,8 @@ class TradingApplication:
         if tau_seconds <= 0:
             return
         if tau_seconds > self.config.logging.active_only_last_seconds:
-            effective_book = self._effective_book(now)
-            yes_bid = effective_book.bid
-            yes_ask = effective_book.ask
-            no_bid = None if yes_ask is None else max(0.0, 1.0 - yes_ask)
-            no_ask = None if yes_bid is None else max(0.0, 1.0 - yes_bid)
+            yes_book = self._effective_book(self.market.yes_token_id, now)
+            no_book = self._effective_book(self.market.no_token_id, now)
             position = "flat"
             if self.state.position is not None:
                 position = "%s@%.4f x %.4f" % (
@@ -322,16 +311,14 @@ class TradingApplication:
                     self.state.position.size,
                 )
             LOGGER.info(
-                "WINDOW window=%s phase=collecting tau=%ss active_in=%ss spot=%s x_t=%s yes_bid=%s yes_ask=%s no_bid=%s no_ask=%s pos=%s",
+                "WINDOW window=%s phase=collecting tau=%ss active_in=%ss spot=%s x_t=%s yes_price=%s no_price=%s pos=%s",
                 self.market.slug or self.market.condition_id,
                 int(tau_seconds),
                 int(tau_seconds - self.config.logging.active_only_last_seconds),
                 _fmt(self._latest_spot_price),
                 _fmt(self.roll.latest_x()),
-                _fmt(yes_bid),
-                _fmt(yes_ask),
-                _fmt(no_bid),
-                _fmt(no_ask),
+                _fmt(yes_book.effective_price(self.config.strategy.max_spread)),
+                _fmt(no_book.effective_price(self.config.strategy.max_spread)),
                 position,
             )
             self._log_health(now)
@@ -361,8 +348,8 @@ class TradingApplication:
         self.state.last_snapshot = None
         self.state.position = None
         self.roll = RollingState(self.config.strategy)
-        self._latest_book = None
-        self._last_usable_book = None
+        self._latest_books = {}
+        self._last_usable_books = {}
         self._last_status_second = None
         self._last_wait_log_second = None
         if self._latest_spot_price is not None:
@@ -412,11 +399,9 @@ class TradingApplication:
         next_start = self.market.end_time or current_window_start(now)
         next_market = resolve_market_for_window(self.config.market, next_start)
         self._ensure_market_times(next_market)
-        if self._book_task is not None:
-            self._book_task.cancel()
+        self._cancel_book_tasks()
         self._reset_for_market(next_market)
-        self._book_task = asyncio.create_task(self._consume_books(self._active_asset_id()))
-        self._tasks["books"] = self._book_task
+        self._start_book_tasks()
 
     def _archive_window(self, now):
         final_direction = self._infer_final_direction()
@@ -463,7 +448,6 @@ class TradingApplication:
         )
 
     def _write_activity_event(self, now, event_type, action, side, size, price, reason, snapshot):
-        effective_book = self._effective_book(now)
         record = {
             "recordType": "activity",
             "eventType": event_type,
@@ -483,8 +467,8 @@ class TradingApplication:
             "fairNo": snapshot.fair_no,
             "edgeYes": snapshot.edge_yes,
             "edgeNo": snapshot.edge_no,
-            "yesBid": effective_book.bid if effective_book is not None else None,
-            "yesAsk": effective_book.ask if effective_book is not None else None,
+            "yesPrice": snapshot.yes_price,
+            "noPrice": snapshot.no_price,
         }
         self.activity_archive.write(record)
 
@@ -521,33 +505,55 @@ class TradingApplication:
             self.health.last_error or "none",
         )
 
-    def _maybe_cache_book(self, book):
+    def _maybe_cache_book(self, asset_id, book):
         if book is None:
             return
         if book.bid is None and book.ask is None and book.bid_size <= 0 and book.ask_size <= 0:
             return
-        if self._last_usable_book is None:
-            self._last_usable_book = book
+        previous = self._last_usable_books.get(asset_id)
+        if previous is None:
+            self._last_usable_books[asset_id] = book
             return
-        self._last_usable_book = book.merged_with(self._last_usable_book)
+        self._last_usable_books[asset_id] = book.merged_with(previous)
 
-    def _effective_book(self, now):
-        if self._latest_book is None and self._last_usable_book is None:
-            return BestBidAsk(asset_id=self._active_asset_id(), bid=None, ask=None)
-        current = self._latest_book or self._last_usable_book
-        if self._last_usable_book is None:
+    def _effective_book(self, asset_id, now):
+        latest_book = self._latest_books.get(asset_id)
+        fallback_book = self._last_usable_books.get(asset_id)
+        if latest_book is None and fallback_book is None:
+            return BestBidAsk(asset_id=asset_id, bid=None, ask=None)
+        current = latest_book or fallback_book
+        if fallback_book is None:
             return current
         max_age_ms = int(self.config.strategy.book_fallback_max_age_seconds * 1000)
         reference_ms = int(now.timestamp() * 1000)
-        if self._last_usable_book.timestamp_ms and (reference_ms - self._last_usable_book.timestamp_ms) > max_age_ms:
+        if fallback_book.timestamp_ms and (reference_ms - fallback_book.timestamp_ms) > max_age_ms:
             return current
-        return current.merged_with(self._last_usable_book)
+        return current.merged_with(fallback_book)
 
     def _start_background_tasks(self):
         self._tasks["prices"] = asyncio.create_task(self._consume_prices())
-        self._book_task = asyncio.create_task(self._consume_books(self._active_asset_id()))
-        self._tasks["books"] = self._book_task
+        self._start_book_tasks()
         self._tasks["health"] = asyncio.create_task(self._health_loop())
+
+    def _start_book_tasks(self):
+        for asset_id in self._market_asset_ids():
+            task_name = "book:%s" % asset_id
+            self._tasks[task_name] = asyncio.create_task(self._consume_books(asset_id))
+
+    def _cancel_book_tasks(self):
+        for task_name in list(self._tasks.keys()):
+            if task_name.startswith("book:"):
+                self._tasks[task_name].cancel()
+                del self._tasks[task_name]
+
+    def _market_asset_ids(self):
+        return [self.market.yes_token_id, self.market.no_token_id]
+
+    def _has_any_book(self):
+        return any(
+            asset_id in self._latest_books or asset_id in self._last_usable_books
+            for asset_id in self._market_asset_ids()
+        )
 
     async def _handle_task_failure(self, payload):
         task_name = payload.get("task", "unknown")
@@ -560,9 +566,10 @@ class TradingApplication:
             return
         if task_name == "prices":
             self._tasks["prices"] = asyncio.create_task(self._consume_prices())
-        elif task_name == "books":
-            self._tasks["books"] = asyncio.create_task(self._consume_books(self._active_asset_id()))
-            self._book_task = self._tasks["books"]
+        elif task_name.startswith("book:"):
+            asset_id = payload.get("asset_id")
+            if asset_id:
+                self._tasks[task_name] = asyncio.create_task(self._consume_books(asset_id))
 
     async def _shutdown(self, reason):
         if not self._running:

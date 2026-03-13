@@ -61,6 +61,13 @@
 - Added CLI `--profile` selection for `inspect`, `run`, and `report`
 - Extended reports with `strategyProfile` summaries for version-to-version comparison
 
+## v1.16.0 - 2026-03-14
+
+- Switched market pricing to real token prices only by subscribing to both `yes_token_id` and `no_token_id`
+- Replaced logged and archived bid/ask fields with single `yesPrice` and `noPrice` effective prices
+- Updated strategy edge calculations to use validated midpoint prices instead of synthetic complement quotes
+- Filtered out placeholder `0.01/0.99` books from status, activity, and replay records
+
 ## v1.4.0 - 2026-03-13
 
 - Added `activity.jsonl` execution ledger with per-action and per-fill events

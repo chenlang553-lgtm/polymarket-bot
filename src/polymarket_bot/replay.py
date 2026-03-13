@@ -7,13 +7,13 @@ def format_replay_line(record):
     record_type = record.get("recordType")
     if record_type == "state":
         return (
-            "STATE window=%s tau=%ss spot=%s yes_bid=%s yes_ask=%s fair_yes=%s fair_no=%s edge_yes=%s edge_no=%s pos=%s"
+            "STATE window=%s tau=%ss spot=%s yes_price=%s no_price=%s fair_yes=%s fair_no=%s edge_yes=%s edge_no=%s pos=%s"
             % (
                 record.get("marketSlug"),
                 record.get("timeToExpirySec"),
                 _fmt(record.get("spot")),
-                _fmt(record.get("yesBid")),
-                _fmt(record.get("yesAsk")),
+                _fmt(record.get("yesPrice")),
+                _fmt(record.get("noPrice")),
                 _fmt(record.get("fairYes")),
                 _fmt(record.get("fairNo")),
                 _fmt(record.get("edgeYes")),

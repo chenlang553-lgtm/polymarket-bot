@@ -151,8 +151,9 @@ class StrategyTests(unittest.TestCase):
         )
         engine = StrategyEngine(config)
         state = _build_state([100.0 + i * 0.2 for i in range(40)])
-        book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, bid_size=100.0, ask_size=100.0)
-        snapshot = engine.compute_snapshot(state, book, tau_seconds=15, previous_fair_yes=0.5)
+        yes_book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, bid_size=100.0, ask_size=100.0)
+        no_book = BestBidAsk(asset_id="no", bid=0.53, ask=0.55, bid_size=100.0, ask_size=100.0)
+        snapshot = engine.compute_snapshot(state, yes_book, no_book, tau_seconds=15, previous_fair_yes=0.5)
         self.assertTrue(0.5 < snapshot.fair_yes < 1.0)
 
     def test_best_bid_ask_merges_with_fallback(self):
@@ -193,8 +194,8 @@ class StrategyTests(unittest.TestCase):
                 "marketSlug": "btc-updown-5m-1773406800",
                 "timeToExpirySec": 12,
                 "spot": 82134.25,
-                "yesBid": 0.46,
-                "yesAsk": 0.47,
+                "yesPrice": 0.465,
+                "noPrice": 0.535,
                 "fairYes": 0.512,
                 "fairNo": 0.488,
                 "edgeYes": 0.042,
@@ -224,26 +225,29 @@ class StrategyTests(unittest.TestCase):
     def test_open_signal_when_edge_is_large(self):
         engine = StrategyEngine(StrategyConfig(size_buckets=default_size_buckets()))
         state = _build_state([100.0 + i * 0.2 for i in range(40)])
-        book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, bid_size=100.0, ask_size=100.0)
-        snapshot = engine.compute_snapshot(state, book, tau_seconds=20)
-        signal = engine.evaluate(snapshot, book, position=None)
+        yes_book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, bid_size=100.0, ask_size=100.0)
+        no_book = BestBidAsk(asset_id="no", bid=0.53, ask=0.55, bid_size=100.0, ask_size=100.0)
+        snapshot = engine.compute_snapshot(state, yes_book, no_book, tau_seconds=20)
+        signal = engine.evaluate(snapshot, yes_book, no_book, position=None)
         self.assertEqual(signal.action, SignalAction.OPEN)
         self.assertEqual(signal.side, OutcomeSide.YES)
 
     def test_hold_when_spread_is_too_wide(self):
         engine = StrategyEngine(StrategyConfig(size_buckets=default_size_buckets()))
         state = _build_state([100.0 + (i % 2) * 0.05 for i in range(40)])
-        book = BestBidAsk(asset_id="yes", bid=0.40, ask=0.50, bid_size=100.0, ask_size=100.0)
-        snapshot = engine.compute_snapshot(state, book, tau_seconds=20)
-        signal = engine.evaluate(snapshot, book, position=None)
+        yes_book = BestBidAsk(asset_id="yes", bid=0.40, ask=0.50, bid_size=100.0, ask_size=100.0)
+        no_book = BestBidAsk(asset_id="no", bid=0.50, ask=0.60, bid_size=100.0, ask_size=100.0)
+        snapshot = engine.compute_snapshot(state, yes_book, no_book, tau_seconds=20)
+        signal = engine.evaluate(snapshot, yes_book, no_book, position=None)
         self.assertEqual(signal.action, SignalAction.HOLD)
-        self.assertEqual(signal.reason, "spread_too_wide")
+        self.assertEqual(signal.reason, "edge_too_small")
 
     def test_close_when_edge_decays(self):
         engine = StrategyEngine(StrategyConfig(size_buckets=default_size_buckets()))
         state = _build_state([100.0 + i * 0.12 for i in range(40)])
-        book = BestBidAsk(asset_id="yes", bid=0.49, ask=0.50, bid_size=100.0, ask_size=100.0)
-        snapshot = engine.compute_snapshot(state, book, tau_seconds=25)
+        yes_book = BestBidAsk(asset_id="yes", bid=0.89, ask=0.91, bid_size=100.0, ask_size=100.0)
+        no_book = BestBidAsk(asset_id="no", bid=0.09, ask=0.11, bid_size=100.0, ask_size=100.0)
+        snapshot = engine.compute_snapshot(state, yes_book, no_book, tau_seconds=25)
         position = Position(
             side=OutcomeSide.YES,
             size=1.0,
@@ -251,7 +255,7 @@ class StrategyTests(unittest.TestCase):
             edge_at_entry=1.0,
             opened_at=datetime.now(timezone.utc) - timedelta(seconds=5),
         )
-        signal = engine.evaluate(snapshot, book, position=position)
+        signal = engine.evaluate(snapshot, yes_book, no_book, position=position)
         self.assertEqual(signal.action, SignalAction.CLOSE)
         self.assertEqual(signal.reason, "edge_decayed")
 

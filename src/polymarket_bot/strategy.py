@@ -24,6 +24,7 @@ class StrategyEngine(object):
         self,
         state,
         book_yes,
+        book_no,
         tau_seconds,
         trade_imbalance=0.0,
         previous_fair_yes=None,
@@ -61,14 +62,16 @@ class StrategyEngine(object):
         fair_yes = clamp(fair_yes, 0.001, 0.999)
         fair_no = 1.0 - fair_yes
 
-        ask_yes = book_yes.ask
-        ask_no = None if ask_yes is None else max(0.001, 1.0 - (book_yes.bid or 0.0))
-        edge_yes = None if ask_yes is None else fair_yes - ask_yes
-        edge_no = None if ask_no is None else fair_no - ask_no
+        yes_price = book_yes.effective_price(self.config.max_spread)
+        no_price = book_no.effective_price(self.config.max_spread)
+        edge_yes = None if yes_price is None else fair_yes - yes_price
+        edge_no = None if no_price is None else fair_no - no_price
 
         return StrategySnapshot(
             fair_yes=fair_yes,
             fair_no=fair_no,
+            yes_price=yes_price,
+            no_price=no_price,
             edge_yes=edge_yes,
             edge_no=edge_no,
             sigma_10=sigma_10,
@@ -94,7 +97,7 @@ class StrategyEngine(object):
         alpha = clamp(self.config.fair_smoothing_alpha, 0.05, 1.0)
         return alpha * fair_yes + (1.0 - alpha) * previous_fair_yes
 
-    def evaluate(self, snapshot, book_yes, position):
+    def evaluate(self, snapshot, book_yes, book_no, position):
         if not (
             self.config.decision_window_end_seconds
             <= snapshot.tau_seconds
@@ -102,15 +105,13 @@ class StrategyEngine(object):
         ):
             return TradeSignal(SignalAction.HOLD, reason="outside_decision_window", snapshot=snapshot)
 
-        spread = book_yes.spread
-        if spread is None or spread > self.config.max_spread:
-            return TradeSignal(SignalAction.HOLD, reason="spread_too_wide", snapshot=snapshot)
-        if book_yes.top_size < self.config.min_top_of_book_size:
-            return TradeSignal(SignalAction.HOLD, reason="top_of_book_too_thin", snapshot=snapshot)
-
         best_side, best_edge = self._best_side(snapshot)
         if best_side is None or best_edge < self.config.min_edge:
             return TradeSignal(SignalAction.HOLD, reason="edge_too_small", snapshot=snapshot)
+
+        selected_book = book_yes if best_side == OutcomeSide.YES else book_no
+        if not selected_book.is_valid(self.config.max_spread, self.config.min_top_of_book_size):
+            return TradeSignal(SignalAction.HOLD, reason="invalid_market_price", snapshot=snapshot)
 
         size = self._size_for_edge(best_edge)
         if position is None:
