@@ -8,8 +8,12 @@ LOGGER = logging.getLogger(__name__)
 
 
 class PaperExecutor:
+    def __init__(self):
+        self.fills = []
+
     def open_position(self, market, signal, ask_price):
         LOGGER.info("PAPER OPEN side=%s size=%.4f price=%.4f reason=%s", signal.side, signal.size, ask_price, signal.reason)
+        self.fills.append({"side": signal.side, "size": signal.size, "price": ask_price, "status": "filled"})
         return Position(
             side=signal.side,
             size=signal.size,

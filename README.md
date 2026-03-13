@@ -58,6 +58,7 @@ polymarket-bot run --config config.json
 - It prints `WINDOW ... phase=collecting` before the active trading phase.
 - It prints `STATUS ...` once per second only during the final `active_only_last_seconds` of the current market.
 - It prints `STRATEGY ...` only when an open, close, or flip action is triggered.
+- It appends one `window_close` JSON record per completed 5 minute market to `window_close.jsonl` by default.
 
 ## Notes
 

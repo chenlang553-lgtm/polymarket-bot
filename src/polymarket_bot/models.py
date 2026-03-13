@@ -152,3 +152,93 @@ class RuntimeState:
         self.position = position
         self.last_snapshot = last_snapshot
         self.recent_trade_signs = recent_trade_signs or []
+
+
+class WindowStats:
+    def __init__(self):
+        self.total_cost = 0.0
+        self.total_fees = 0.0
+        self.total_outlay = 0.0
+        self.realized_pnl = 0.0
+        self.worst_case_loss = 0.0
+        self.open_order_count = 0
+        self.fill_count = 0
+        self.fill_count_by_side = {}
+        self.fill_qty_by_side = {}
+        self.fill_notional_by_side = {}
+        self.action_counts = {}
+        self.action_qty = {}
+        self.strategy_type_counts = {}
+        self.primary_strategy_type = None
+        self.execution_status_counts = {}
+        self.last_yes_ask = None
+        self.last_yes_bid = None
+        self.last_fair_yes = None
+
+    def record_action(self, action, qty=0.0, strategy_type=None, execution_status=None):
+        self.action_counts[action] = self.action_counts.get(action, 0) + 1
+        if qty:
+            self.action_qty[action] = self.action_qty.get(action, 0.0) + qty
+        if strategy_type:
+            self.strategy_type_counts[strategy_type] = self.strategy_type_counts.get(strategy_type, 0) + 1
+            if self.primary_strategy_type is None:
+                self.primary_strategy_type = strategy_type
+        if execution_status:
+            self.execution_status_counts[execution_status] = self.execution_status_counts.get(execution_status, 0) + 1
+
+    def record_fill(self, side, qty, price, fee=0.0):
+        direction = "Up" if side == OutcomeSide.YES else "Down"
+        self.fill_count += 1
+        self.fill_count_by_side[direction] = self.fill_count_by_side.get(direction, 0) + 1
+        self.fill_qty_by_side[direction] = self.fill_qty_by_side.get(direction, 0.0) + qty
+        self.fill_notional_by_side[direction] = self.fill_notional_by_side.get(direction, 0.0) + (qty * price)
+        self.total_cost += qty * price
+        self.total_fees += fee
+        self.total_outlay = self.total_cost + self.total_fees
+        self.worst_case_loss = self.total_outlay
+
+    def finalize(self, final_direction):
+        prices = {"up": 0.99 if final_direction == "Up" else 0.01, "down": 0.99 if final_direction == "Down" else 0.01}
+        pnl_if_up = self.fill_qty_by_side.get("Up", 0.0) - self.total_outlay
+        pnl_if_down = self.fill_qty_by_side.get("Down", 0.0) - self.total_outlay
+        self.realized_pnl = pnl_if_up if final_direction == "Up" else pnl_if_down
+        coverage = 0.0
+        total_qty = self.fill_qty_by_side.get("Up", 0.0) + self.fill_qty_by_side.get("Down", 0.0)
+        if total_qty > 0:
+            coverage = min(self.fill_qty_by_side.get("Up", 0.0), self.fill_qty_by_side.get("Down", 0.0)) / total_qty
+        up_qty = self.fill_qty_by_side.get("Up", 0.0)
+        down_qty = self.fill_qty_by_side.get("Down", 0.0)
+        up_avg = 0.0 if up_qty == 0 else self.fill_notional_by_side.get("Up", 0.0) / up_qty
+        down_avg = 0.0 if down_qty == 0 else self.fill_notional_by_side.get("Down", 0.0) / down_qty
+        return {
+            "prices": prices,
+            "metrics": {
+                "totalCost": self.total_cost,
+                "totalFees": self.total_fees,
+                "totalOutlay": self.total_outlay,
+                "pnlIfUp": pnl_if_up,
+                "pnlIfDown": pnl_if_down,
+                "pnlMin": min(pnl_if_up, pnl_if_down),
+                "pnlMax": max(pnl_if_up, pnl_if_down),
+                "lockedPnl": self.realized_pnl,
+                "coverage": coverage,
+                "upAvg": up_avg,
+                "downAvg": down_avg,
+                "bias": 0,
+                "balanceRatio": 0 if down_qty == 0 else up_qty / down_qty,
+            },
+            "realizedPnl": self.realized_pnl,
+            "worstCaseLoss": self.worst_case_loss,
+            "openOrderCount": self.open_order_count,
+            "activity": {
+                "actionCounts": self.action_counts,
+                "actionQty": self.action_qty,
+                "strategyTypeCounts": self.strategy_type_counts,
+                "primaryStrategyType": self.primary_strategy_type,
+                "executionStatusCounts": self.execution_status_counts,
+                "fillCount": self.fill_count,
+                "fillCountBySide": self.fill_count_by_side,
+                "fillQtyBySide": self.fill_qty_by_side,
+                "fillNotionalBySide": self.fill_notional_by_side,
+            },
+        }

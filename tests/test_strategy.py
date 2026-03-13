@@ -1,6 +1,10 @@
 from datetime import datetime, timedelta, timezone
 import unittest
+import json
+import tempfile
+import os
 
+from polymarket_bot.archive import WindowArchiveWriter
 from polymarket_bot.config import StrategyConfig
 from polymarket_bot.gamma import build_market_slug
 from polymarket_bot.market_state import RollingState
@@ -17,6 +21,18 @@ def _build_state(prices):
 
 
 class StrategyTests(unittest.TestCase):
+    def test_archive_writer_appends_jsonl_records(self):
+        handle, path = tempfile.mkstemp()
+        os.close(handle)
+        try:
+            writer = WindowArchiveWriter(path)
+            writer.write({"recordType": "window_close", "marketSlug": "x"})
+            with open(path) as saved:
+                payload = json.loads(saved.readline())
+            self.assertEqual(payload["marketSlug"], "x")
+        finally:
+            os.unlink(path)
+
     def test_build_market_slug_rounds_to_5m_boundary(self):
         from datetime import datetime, timezone
 

@@ -74,9 +74,12 @@ class StrategyConfig:
 
 
 class ExecutionConfig:
-    def __init__(self, mode="paper", order_type="fok"):
+    def __init__(self, mode="paper", order_type="fok", strategy_version=1, strategy_profile="main", strategy_type="fair_probability"):
         self.mode = mode
         self.order_type = order_type
+        self.strategy_version = strategy_version
+        self.strategy_profile = strategy_profile
+        self.strategy_type = strategy_type
 
 
 class WalletConfig:
@@ -88,9 +91,10 @@ class WalletConfig:
 
 
 class LoggingConfig:
-    def __init__(self, level="INFO", active_only_last_seconds=60):
+    def __init__(self, level="INFO", active_only_last_seconds=60, window_close_path="window_close.jsonl"):
         self.level = level
         self.active_only_last_seconds = active_only_last_seconds
+        self.window_close_path = window_close_path
 
 
 class AppConfig:

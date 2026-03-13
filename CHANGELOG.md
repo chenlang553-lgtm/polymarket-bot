@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.0 - 2026-03-13
+
+- Automatic `window_close` JSONL archival at the end of each 5 minute market
+- Added per-window execution stats, fill counts, notional tracking, and realized PnL summary
+- Config support for `strategy_version`, `strategy_profile`, `strategy_type`, and `window_close_path`
+- Default archive output path is `window_close.jsonl`
+
 ## v1.1.0 - 2026-03-13
 
 - Automatic 5 minute market window discovery from `slug_prefix`
