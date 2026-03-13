@@ -163,6 +163,22 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(merged.bid, 0.45)
         self.assertEqual(merged.ask, 0.47)
 
+    def test_market_price_priority(self):
+        midpoint_book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, last_trade_price=0.40)
+        self.assertAlmostEqual(midpoint_book.market_price(), 0.46)
+
+        trade_book = BestBidAsk(asset_id="yes", bid=None, ask=None, last_trade_price=0.41)
+        self.assertEqual(trade_book.market_price(), 0.41)
+
+        bid_only_book = BestBidAsk(asset_id="yes", bid=0.39, ask=None)
+        self.assertEqual(bid_only_book.market_price(), 0.39)
+
+        ask_only_book = BestBidAsk(asset_id="yes", bid=None, ask=0.52)
+        self.assertEqual(ask_only_book.market_price(), 0.52)
+
+        empty_book = BestBidAsk(asset_id="yes", bid=None, ask=None)
+        self.assertIsNone(empty_book.market_price())
+
     def test_archive_writer_appends_jsonl_records(self):
         handle, path = tempfile.mkstemp()
         os.close(handle)
@@ -240,7 +256,7 @@ class StrategyTests(unittest.TestCase):
         snapshot = engine.compute_snapshot(state, yes_book, no_book, tau_seconds=20)
         signal = engine.evaluate(snapshot, yes_book, no_book, position=None)
         self.assertEqual(signal.action, SignalAction.HOLD)
-        self.assertEqual(signal.reason, "edge_too_small")
+        self.assertEqual(signal.reason, "spread_too_wide")
 
     def test_close_when_edge_decays(self):
         engine = StrategyEngine(StrategyConfig(size_buckets=default_size_buckets()))

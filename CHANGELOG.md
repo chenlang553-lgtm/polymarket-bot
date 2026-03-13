@@ -61,6 +61,12 @@
 - Added CLI `--profile` selection for `inspect`, `run`, and `report`
 - Extended reports with `strategyProfile` summaries for version-to-version comparison
 
+## v1.17.0 - 2026-03-14
+
+- Changed `yes_price` and `no_price` to use the priority `midpoint -> lastTradePrice -> bestBid -> bestAsk -> null`
+- Added `last_trade_price` handling for Polymarket `price_change` and related market websocket messages
+- Updated strategy edge calculations to use the same priority-based market price instead of requiring a full valid midpoint
+
 ## v1.16.0 - 2026-03-14
 
 - Switched market pricing to real token prices only by subscribing to both `yes_token_id` and `no_token_id`

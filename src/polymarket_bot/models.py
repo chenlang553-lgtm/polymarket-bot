@@ -22,13 +22,14 @@ class OrderBookLevel:
 
 
 class BestBidAsk:
-    def __init__(self, asset_id, bid, ask, bid_size=0.0, ask_size=0.0, timestamp_ms=0):
+    def __init__(self, asset_id, bid, ask, bid_size=0.0, ask_size=0.0, timestamp_ms=0, last_trade_price=None):
         self.asset_id = asset_id
         self.bid = bid
         self.ask = ask
         self.bid_size = bid_size
         self.ask_size = ask_size
         self.timestamp_ms = timestamp_ms
+        self.last_trade_price = last_trade_price
 
     @property
     def spread(self) -> float | None:
@@ -67,9 +68,23 @@ class BestBidAsk:
         return True
 
     def effective_price(self, max_spread=None, min_size=0.0):
+        return self.market_price()
+
+    def market_price(self):
+        if self.bid is not None and self.ask is not None:
+            return (self.bid + self.ask) / 2.0
+        if self.last_trade_price is not None:
+            return self.last_trade_price
+        if self.bid is not None:
+            return self.bid
+        if self.ask is not None:
+            return self.ask
+        return None
+
+    def tradable(self, max_spread=None, min_size=0.0) -> bool:
         if not self.is_valid(max_spread=max_spread, min_size=min_size):
-            return None
-        return self.midpoint
+            return self.market_price() is not None
+        return True
 
     def merged_with(self, fallback):
         if fallback is None:
@@ -81,6 +96,7 @@ class BestBidAsk:
             bid_size=self.bid_size if self.bid_size > 0 else fallback.bid_size,
             ask_size=self.ask_size if self.ask_size > 0 else fallback.ask_size,
             timestamp_ms=self.timestamp_ms or fallback.timestamp_ms,
+            last_trade_price=self.last_trade_price if self.last_trade_price is not None else fallback.last_trade_price,
         )
 
 

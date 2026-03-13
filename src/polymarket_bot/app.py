@@ -317,8 +317,8 @@ class TradingApplication:
                 int(tau_seconds - self.config.logging.active_only_last_seconds),
                 _fmt(self._latest_spot_price),
                 _fmt(self.roll.latest_x()),
-                _fmt(yes_book.effective_price(self.config.strategy.max_spread)),
-                _fmt(no_book.effective_price(self.config.strategy.max_spread)),
+                _fmt(yes_book.market_price()),
+                _fmt(no_book.market_price()),
                 position,
             )
             self._log_health(now)

@@ -127,6 +127,7 @@ def _parse_book_like_message(message, asset_id):
             bid_size=float(message.get("best_bid_size", 0.0) or 0.0),
             ask_size=float(message.get("best_ask_size", 0.0) or 0.0),
             timestamp_ms=int(message.get("timestamp", 0) or 0),
+            last_trade_price=_parse_last_trade_price(message),
         )
 
     bids = message.get("bids", [])
@@ -140,6 +141,7 @@ def _parse_book_like_message(message, asset_id):
         bid_size=float(best_bid.get("size", 0.0) or 0.0),
         ask_size=float(best_ask.get("size", 0.0) or 0.0),
         timestamp_ms=int(message.get("timestamp", 0) or 0),
+        last_trade_price=_parse_last_trade_price(message),
     )
 
 
@@ -147,3 +149,11 @@ def _parse_optional_float(value):
     if value in (None, ""):
         return None
     return float(value)
+
+
+def _parse_last_trade_price(message):
+    for key in ("last_trade_price", "lastTradePrice", "price"):
+        value = message.get(key)
+        if value not in (None, ""):
+            return float(value)
+    return None

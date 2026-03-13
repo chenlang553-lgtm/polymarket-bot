@@ -62,8 +62,8 @@ class StrategyEngine(object):
         fair_yes = clamp(fair_yes, 0.001, 0.999)
         fair_no = 1.0 - fair_yes
 
-        yes_price = book_yes.effective_price(self.config.max_spread)
-        no_price = book_no.effective_price(self.config.max_spread)
+        yes_price = book_yes.market_price()
+        no_price = book_no.market_price()
         edge_yes = None if yes_price is None else fair_yes - yes_price
         edge_no = None if no_price is None else fair_no - no_price
 
@@ -110,8 +110,13 @@ class StrategyEngine(object):
             return TradeSignal(SignalAction.HOLD, reason="edge_too_small", snapshot=snapshot)
 
         selected_book = book_yes if best_side == OutcomeSide.YES else book_no
-        if not selected_book.is_valid(self.config.max_spread, self.config.min_top_of_book_size):
-            return TradeSignal(SignalAction.HOLD, reason="invalid_market_price", snapshot=snapshot)
+        selected_price = snapshot.yes_price if best_side == OutcomeSide.YES else snapshot.no_price
+        if selected_price is None:
+            return TradeSignal(SignalAction.HOLD, reason="missing_market_price", snapshot=snapshot)
+        if selected_book.spread is not None and selected_book.spread > self.config.max_spread:
+            return TradeSignal(SignalAction.HOLD, reason="spread_too_wide", snapshot=snapshot)
+        if selected_book.bid_size > 0 and selected_book.ask_size > 0 and selected_book.top_size < self.config.min_top_of_book_size:
+            return TradeSignal(SignalAction.HOLD, reason="top_of_book_too_thin", snapshot=snapshot)
 
         size = self._size_for_edge(best_edge)
         if position is None:
