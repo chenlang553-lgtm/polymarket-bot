@@ -28,6 +28,8 @@ class StrategyEngine(object):
         tau_seconds,
         trade_imbalance=0.0,
         previous_fair_yes=None,
+        yes_price=None,
+        no_price=None,
     ):
         sigma_10 = state.sigma_10()
         sigma_30 = state.sigma_30()
@@ -62,8 +64,8 @@ class StrategyEngine(object):
         fair_yes = clamp(fair_yes, 0.001, 0.999)
         fair_no = 1.0 - fair_yes
 
-        yes_price = book_yes.market_price()
-        no_price = book_no.market_price()
+        yes_price = book_yes.market_price() if yes_price is None else yes_price
+        no_price = book_no.market_price() if no_price is None else no_price
         edge_yes = None if yes_price is None else fair_yes - yes_price
         edge_no = None if no_price is None else fair_no - no_price
 

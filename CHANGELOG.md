@@ -61,6 +61,11 @@
 - Added CLI `--profile` selection for `inspect`, `run`, and `report`
 - Extended reports with `strategyProfile` summaries for version-to-version comparison
 
+## v1.19.0 - 2026-03-14
+
+- Added per-outcome cached market prices so `yes_price` and `no_price` no longer flap to `None` on brief websocket gaps
+- Strategy snapshots now prefer the current market price and fall back to the most recent valid price within the configured book fallback age
+
 ## v1.18.0 - 2026-03-14
 
 - Fixed execution pricing so orders no longer fall back to `bestBid` when buying an outcome

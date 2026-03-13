@@ -33,6 +33,7 @@ class TradingApplication:
         self.state_archive = JsonlWriter(config.logging.market_state_path)
         self._latest_books = {}
         self._last_usable_books = {}
+        self._last_market_prices = {}
         self._latest_trade_imbalance = 0.0
         self._queue = asyncio.Queue()
         self._last_status_second = None
@@ -157,17 +158,19 @@ class TradingApplication:
             self._log_waiting(now)
             return
 
+        yes_book = self._effective_book(self.market.yes_token_id, now)
+        no_book = self._effective_book(self.market.no_token_id, now)
         snapshot = self.strategy.compute_snapshot(
             state=self.roll,
-            book_yes=self._effective_book(self.market.yes_token_id, now),
-            book_no=self._effective_book(self.market.no_token_id, now),
+            book_yes=yes_book,
+            book_no=no_book,
             tau_seconds=tau_seconds,
             trade_imbalance=self._latest_trade_imbalance,
             previous_fair_yes=None if self.state.last_snapshot is None else self.state.last_snapshot.fair_yes,
+            yes_price=self._market_price_for_asset(self.market.yes_token_id, now),
+            no_price=self._market_price_for_asset(self.market.no_token_id, now),
         )
         self.state.last_snapshot = snapshot
-        yes_book = self._effective_book(self.market.yes_token_id, now)
-        no_book = self._effective_book(self.market.no_token_id, now)
         self._window_stats.last_yes_ask = snapshot.yes_price
         self._window_stats.last_yes_bid = snapshot.no_price
         self._window_stats.last_fair_yes = snapshot.fair_yes
@@ -313,8 +316,6 @@ class TradingApplication:
         if tau_seconds <= 0:
             return
         if tau_seconds > self.config.logging.active_only_last_seconds:
-            yes_book = self._effective_book(self.market.yes_token_id, now)
-            no_book = self._effective_book(self.market.no_token_id, now)
             position = "flat"
             if self.state.position is not None:
                 position = "%s@%.4f x %.4f" % (
@@ -329,8 +330,8 @@ class TradingApplication:
                 int(tau_seconds - self.config.logging.active_only_last_seconds),
                 _fmt(self._latest_spot_price),
                 _fmt(self.roll.latest_x()),
-                _fmt(yes_book.market_price()),
-                _fmt(no_book.market_price()),
+                _fmt(self._market_price_for_asset(self.market.yes_token_id, now)),
+                _fmt(self._market_price_for_asset(self.market.no_token_id, now)),
                 position,
             )
             self._log_health(now)
@@ -362,6 +363,7 @@ class TradingApplication:
         self.roll = RollingState(self.config.strategy)
         self._latest_books = {}
         self._last_usable_books = {}
+        self._last_market_prices = {}
         self._last_status_second = None
         self._last_wait_log_second = None
         if self._latest_spot_price is not None:
@@ -525,8 +527,12 @@ class TradingApplication:
         previous = self._last_usable_books.get(asset_id)
         if previous is None:
             self._last_usable_books[asset_id] = book
-            return
-        self._last_usable_books[asset_id] = book.merged_with(previous)
+        else:
+            self._last_usable_books[asset_id] = book.merged_with(previous)
+        price = book.market_price()
+        if price is not None:
+            timestamp_ms = book.timestamp_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
+            self._last_market_prices[asset_id] = (price, timestamp_ms)
 
     def _effective_book(self, asset_id, now):
         latest_book = self._latest_books.get(asset_id)
@@ -541,6 +547,22 @@ class TradingApplication:
         if fallback_book.timestamp_ms and (reference_ms - fallback_book.timestamp_ms) > max_age_ms:
             return current
         return current.merged_with(fallback_book)
+
+    def _market_price_for_asset(self, asset_id, now):
+        book = self._effective_book(asset_id, now)
+        price = book.market_price()
+        if price is not None:
+            timestamp_ms = book.timestamp_ms or int(now.timestamp() * 1000)
+            self._last_market_prices[asset_id] = (price, timestamp_ms)
+            return price
+        cached = self._last_market_prices.get(asset_id)
+        if cached is None:
+            return None
+        cached_price, cached_at_ms = cached
+        max_age_ms = int(self.config.strategy.book_fallback_max_age_seconds * 1000)
+        if (int(now.timestamp() * 1000) - cached_at_ms) > max_age_ms:
+            return None
+        return cached_price
 
     def _start_background_tasks(self):
         self._tasks["prices"] = asyncio.create_task(self._consume_prices())
