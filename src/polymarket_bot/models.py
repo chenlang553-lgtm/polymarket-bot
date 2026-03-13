@@ -73,6 +73,7 @@ class MarketDefinition:
         end_time=None,
         neg_risk=False,
         tick_size=0.01,
+        window_size_seconds=300,
     ):
         self.question = question
         self.slug = slug
@@ -83,6 +84,7 @@ class MarketDefinition:
         self.end_time = end_time
         self.neg_risk = neg_risk
         self.tick_size = tick_size
+        self.window_size_seconds = window_size_seconds
 
 
 class Position:

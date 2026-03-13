@@ -16,19 +16,23 @@ class MarketConfig:
         self,
         market_slug="",
         condition_id="",
+        slug_prefix="btc-updown-5m",
         yes_token_id="",
         no_token_id="",
         trade_side=OutcomeSide.YES,
         start_time_utc=None,
         end_time_utc=None,
+        auto_roll_windows=True,
     ):
         self.market_slug = market_slug
         self.condition_id = condition_id
+        self.slug_prefix = slug_prefix
         self.yes_token_id = yes_token_id
         self.no_token_id = no_token_id
         self.trade_side = trade_side
         self.start_time_utc = start_time_utc
         self.end_time_utc = end_time_utc
+        self.auto_roll_windows = auto_roll_windows
 
 
 class PriceFeedConfig:
@@ -84,8 +88,9 @@ class WalletConfig:
 
 
 class LoggingConfig:
-    def __init__(self, level="INFO"):
+    def __init__(self, level="INFO", active_only_last_seconds=60):
         self.level = level
+        self.active_only_last_seconds = active_only_last_seconds
 
 
 class AppConfig:
@@ -112,11 +117,13 @@ def load_config(path):
         market=MarketConfig(
             market_slug=market.get("market_slug", ""),
             condition_id=market.get("condition_id", ""),
+            slug_prefix=market.get("slug_prefix", "btc-updown-5m"),
             yes_token_id=market.get("yes_token_id", ""),
             no_token_id=market.get("no_token_id", ""),
             trade_side=OutcomeSide(market.get("trade_side", "yes")),
             start_time_utc=_parse_datetime(market.get("start_time_utc", "")),
             end_time_utc=_parse_datetime(market.get("end_time_utc", "")),
+            auto_roll_windows=market.get("auto_roll_windows", True),
         ),
         price_feed=PriceFeedConfig(**raw.get("price_feed", {})),
         strategy=StrategyConfig(

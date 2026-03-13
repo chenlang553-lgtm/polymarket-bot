@@ -2,11 +2,13 @@
   "market": {
     "market_slug": "",
     "condition_id": "",
+    "slug_prefix": "btc-updown-5m",
     "yes_token_id": "",
     "no_token_id": "",
     "trade_side": "yes",
     "start_time_utc": "",
-    "end_time_utc": ""
+    "end_time_utc": "",
+    "auto_roll_windows": true
   },
   "price_feed": {
     "symbol": "btcusdt",
@@ -42,6 +44,7 @@
     "chain_id": 137
   },
   "logging": {
-    "level": "INFO"
+    "level": "INFO",
+    "active_only_last_seconds": 60
   }
 }

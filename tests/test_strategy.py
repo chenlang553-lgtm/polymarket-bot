@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 import unittest
 
 from polymarket_bot.config import StrategyConfig
+from polymarket_bot.gamma import build_market_slug
 from polymarket_bot.market_state import RollingState
 from polymarket_bot.models import BestBidAsk, OutcomeSide, Position, SignalAction
 from polymarket_bot.strategy import StrategyEngine, default_size_buckets
@@ -16,6 +17,12 @@ def _build_state(prices):
 
 
 class StrategyTests(unittest.TestCase):
+    def test_build_market_slug_rounds_to_5m_boundary(self):
+        from datetime import datetime, timezone
+
+        moment = datetime(2026, 3, 13, 13, 2, 41, tzinfo=timezone.utc)
+        self.assertEqual(build_market_slug("btc-updown-5m", moment), "btc-updown-5m-1773406800")
+
     def test_open_signal_when_edge_is_large(self):
         engine = StrategyEngine(StrategyConfig(size_buckets=default_size_buckets()))
         state = _build_state([100.0 + i * 0.2 for i in range(40)])

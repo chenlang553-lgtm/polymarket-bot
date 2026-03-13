@@ -2,11 +2,10 @@ import asyncio
 from contextlib import suppress
 from datetime import datetime, timezone
 import logging
-from math import isnan
 
 from .config import AppConfig
 from .execution import build_executor
-from .gamma import resolve_market
+from .gamma import current_window_start, next_window_start, resolve_market, resolve_market_for_window
 from .market_state import RollingState
 from .models import BestBidAsk, OutcomeSide, RuntimeState, SignalAction
 from .strategy import StrategyEngine, default_size_buckets
@@ -21,7 +20,7 @@ class TradingApplication:
         if not config.strategy.size_buckets:
             config.strategy.size_buckets = default_size_buckets()
         self.config = config
-        self.market = resolve_market(config.market)
+        self.market = self._resolve_initial_market()
         self.state = RuntimeState(market=self.market)
         self.roll = RollingState(config.strategy)
         self.strategy = StrategyEngine(config.strategy)
@@ -30,22 +29,28 @@ class TradingApplication:
         self._latest_trade_imbalance = 0.0
         self._queue = asyncio.Queue()
         self._last_status_second = None
+        self._last_wait_log_second = None
+        self._book_task = None
+        self._latest_spot_price = None
 
     async def run(self):
-        side_asset = self.market.yes_token_id if self.config.market.trade_side == OutcomeSide.YES else self.market.no_token_id
         producers = [
             asyncio.create_task(self._consume_prices()),
-            asyncio.create_task(self._consume_books(side_asset)),
         ]
+        self._book_task = asyncio.create_task(self._consume_books(self._active_asset_id()))
+        producers.append(self._book_task)
         try:
             while True:
                 kind, payload = await self._queue.get()
                 if kind == "price":
                     self._handle_price(payload)
                 elif kind == "book":
-                    self._latest_book = payload
+                    if payload.asset_id == self._active_asset_id():
+                        self._latest_book = payload
                 if self._latest_book is not None and self.roll.open_price is not None:
                     self._tick()
+                else:
+                    self._log_waiting()
         finally:
             for task in producers:
                 task.cancel()
@@ -65,17 +70,25 @@ class TradingApplication:
 
         if not isinstance(tick, PriceTick):
             return
+        self._latest_spot_price = tick.price
         x_t = self.roll.update_price(tick.price)
         LOGGER.debug("spot tick symbol=%s price=%.2f x_t=%.6f", tick.symbol, tick.price, x_t)
 
     def _tick(self):
-        if self.market.end_time is None:
+        if self.market.start_time is None or self.market.end_time is None:
             raise RuntimeError("market end_time is required for live strategy timing")
         now = datetime.now(timezone.utc)
+        if now < self.market.start_time:
+            self._log_waiting(now)
+            return
         tau_seconds = (self.market.end_time - now).total_seconds()
         if tau_seconds <= 0:
-            LOGGER.info("market window is over")
-            raise SystemExit(0)
+            self._roll_to_next_window(now)
+            return
+
+        if tau_seconds > self.config.logging.active_only_last_seconds:
+            self._log_waiting(now)
+            return
 
         snapshot = self.strategy.compute_snapshot(
             state=self.roll,
@@ -123,8 +136,6 @@ class TradingApplication:
             self.state.position = self.executor.open_position(self.market, signal, ask_price)
 
     def _log_status(self, now, snapshot):
-        if snapshot.tau_seconds > 60:
-            return
         current_second = int(now.timestamp())
         if self._last_status_second == current_second:
             return
@@ -158,6 +169,78 @@ class TradingApplication:
             _fmt(snapshot.edge_no),
             position,
         )
+
+    def _log_waiting(self, now=None):
+        now = now or datetime.now(timezone.utc)
+        current_second = int(now.timestamp())
+        if self._last_wait_log_second == current_second:
+            return
+        self._last_wait_log_second = current_second
+
+        if self.market.start_time is None or self.market.end_time is None:
+            return
+
+        tau_seconds = (self.market.end_time - now).total_seconds()
+        if tau_seconds <= 0:
+            return
+        if tau_seconds > self.config.logging.active_only_last_seconds:
+            LOGGER.info(
+                "WINDOW window=%s phase=collecting tau=%ss active_in=%ss spot=%s",
+                self.market.slug or self.market.condition_id,
+                int(tau_seconds),
+                int(tau_seconds - self.config.logging.active_only_last_seconds),
+                _fmt(self._latest_spot_price),
+            )
+
+    def _resolve_initial_market(self):
+        if self.config.market.market_slug or self.config.market.condition_id or (self.config.market.yes_token_id and self.config.market.no_token_id):
+            market = resolve_market(self.config.market)
+        else:
+            market = resolve_market_for_window(self.config.market, current_window_start())
+        self._ensure_market_times(market)
+        return market
+
+    def _ensure_market_times(self, market):
+        if market.start_time is None and market.slug:
+            market.start_time = current_window_start()
+        if market.end_time is None and market.start_time is not None:
+            from datetime import timedelta
+            market.end_time = market.start_time + timedelta(seconds=market.window_size_seconds)
+
+    def _active_asset_id(self):
+        return self.market.yes_token_id if self.config.market.trade_side == OutcomeSide.YES else self.market.no_token_id
+
+    def _reset_for_market(self, market):
+        self.market = market
+        self.state.market = market
+        self.state.last_snapshot = None
+        self.state.position = None
+        self.roll = RollingState(self.config.strategy)
+        self._latest_book = None
+        self._last_status_second = None
+        self._last_wait_log_second = None
+        if self._latest_spot_price is not None:
+            self.roll.update_price(self._latest_spot_price)
+        LOGGER.info(
+            "WINDOW window=%s phase=activated start=%s end=%s trade_side=%s",
+            self.market.slug or self.market.condition_id,
+            self.market.start_time.isoformat() if self.market.start_time else "unknown",
+            self.market.end_time.isoformat() if self.market.end_time else "unknown",
+            self.config.market.trade_side.value,
+        )
+
+    def _roll_to_next_window(self, now):
+        if not self.config.market.auto_roll_windows:
+            LOGGER.info("market window is over")
+            raise SystemExit(0)
+        next_start = next_window_start(now)
+        next_market = resolve_market_for_window(self.config.market, next_start)
+        self._ensure_market_times(next_market)
+        if self._book_task is not None:
+            self._book_task.cancel()
+        self._reset_for_market(next_market)
+        self._book_task = asyncio.create_task(self._consume_books(self._active_asset_id()))
+
 
 
 def _fmt(value):

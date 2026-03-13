@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.1.0 - 2026-03-13
+
+- Automatic 5 minute market window discovery from `slug_prefix`
+- Automatic market rollover when the current 5 minute window expires
+- Continuous spot collection with active trading and status output only in the final configured seconds
+- New `WINDOW ... phase=collecting` and `WINDOW ... phase=activated` lifecycle logs
+- Config support for `slug_prefix`, `auto_roll_windows`, and `active_only_last_seconds`
+- Unit test coverage for slug generation on 5 minute boundaries
+
 ## v1.0.0 - 2026-03-13
 
 - Initial project scaffold for a Polymarket BTC 5 minute up/down bot

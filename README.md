@@ -33,8 +33,10 @@ The bot can bootstrap a market either from:
 
 - `market_slug`
 - `condition_id`
+- `slug_prefix` for automatic current 5 minute window discovery
 
 It will fetch token IDs from the Gamma API and subscribe to the chosen outcome token on the CLOB market channel.
+If `market_slug` and `condition_id` are empty, the bot derives the current market slug as `<slug_prefix>-<window_start_epoch>` and rolls to the next 5 minute window automatically.
 
 ## Run
 
@@ -49,6 +51,13 @@ Run in paper mode:
 ```bash
 polymarket-bot run --config config.json
 ```
+
+## Runtime behavior
+
+- The bot listens to BTC spot continuously to build window state.
+- It prints `WINDOW ... phase=collecting` before the active trading phase.
+- It prints `STATUS ...` once per second only during the final `active_only_last_seconds` of the current market.
+- It prints `STRATEGY ...` only when an open, close, or flip action is triggered.
 
 ## Notes
 

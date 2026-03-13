@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
+import re
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
@@ -20,6 +21,30 @@ def _parse_datetime(value):
     if not value:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _window_start_from_slug(slug):
+    match = re.search(r"(\d{10})$", slug or "")
+    if not match:
+        return None
+    return datetime.fromtimestamp(int(match.group(1)), tz=timezone.utc)
+
+
+def build_market_slug(slug_prefix, start_time):
+    start_ts = int(start_time.replace(second=0, microsecond=0).timestamp())
+    start_ts -= start_ts % 300
+    return "%s-%s" % (slug_prefix, start_ts)
+
+
+def current_window_start(now=None):
+    now = now or datetime.now(timezone.utc)
+    start_ts = int(now.timestamp())
+    start_ts -= start_ts % 300
+    return datetime.fromtimestamp(start_ts, tz=timezone.utc)
+
+
+def next_window_start(now=None):
+    return current_window_start(now) + timedelta(seconds=300)
 
 
 def resolve_market(config):
@@ -61,8 +86,30 @@ def resolve_market(config):
         condition_id=market.get("conditionId", ""),
         yes_token_id=yes_token_id,
         no_token_id=no_token_id,
-        start_time=config.start_time_utc or _parse_datetime(market.get("startDate")),
+        start_time=config.start_time_utc or _parse_datetime(market.get("startDate")) or _window_start_from_slug(market.get("slug", "")),
         end_time=config.end_time_utc or _parse_datetime(market.get("endDate")),
         neg_risk=bool(market.get("negRisk", False)),
         tick_size=float(market.get("minimum_tick_size", 0.01) or 0.01),
+        window_size_seconds=300,
     )
+
+
+def resolve_market_for_window(config, window_start):
+    slug = build_market_slug(config.slug_prefix, window_start)
+    derived = MarketConfig(
+        market_slug=slug,
+        condition_id=config.condition_id,
+        slug_prefix=config.slug_prefix,
+        yes_token_id=config.yes_token_id,
+        no_token_id=config.no_token_id,
+        trade_side=config.trade_side,
+        start_time_utc=window_start,
+        end_time_utc=window_start + timedelta(seconds=300),
+        auto_roll_windows=config.auto_roll_windows,
+    )
+    market = resolve_market(derived)
+    if market.start_time is None:
+        market.start_time = window_start
+    if market.end_time is None:
+        market.end_time = window_start + timedelta(seconds=300)
+    return market
