@@ -36,13 +36,14 @@ class LiveExecutor:
         try:
             from py_clob_client.client import ClobClient
             from py_clob_client.clob_types import MarketOrderArgs, OrderType
-            from py_clob_client.order_builder.constants import BUY
+            from py_clob_client.order_builder.constants import BUY, SELL
         except ImportError as exc:
             raise RuntimeError("live trading requires pip install -e .[trading]") from exc
         self._client_cls = ClobClient
         self._market_order_args_cls = MarketOrderArgs
         self._order_type_cls = OrderType
         self._buy_constant = BUY
+        self._sell_constant = SELL
         self._client = ClobClient(
             "https://clob.polymarket.com",
             key=self.wallet.private_key,
@@ -72,7 +73,16 @@ class LiveExecutor:
         )
 
     def close_position(self, market, position):
-        LOGGER.warning("live close is not implemented; flatten manually or extend executor")
+        token_id = market.yes_token_id if position.side == OutcomeSide.YES else market.no_token_id
+        order = self._market_order_args_cls(
+            token_id=token_id,
+            amount=float(position.size),
+            side=self._sell_constant,
+            order_type=getattr(self._order_type_cls, self.execution.order_type.upper()),
+        )
+        signed = self._client.create_market_order(order)
+        self._client.post_order(signed, getattr(self._order_type_cls, self.execution.order_type.upper()))
+        LOGGER.info("LIVE CLOSE side=%s size=%.4f token=%s", position.side, position.size, token_id)
 
 
 def build_executor(execution, wallet):
