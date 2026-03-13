@@ -5,7 +5,7 @@ import tempfile
 import os
 
 from polymarket_bot.archive import JsonlWriter, WindowArchiveWriter
-from polymarket_bot.config import StrategyConfig
+from polymarket_bot.config import StrategyConfig, load_config
 from polymarket_bot.gamma import build_market_slug
 from polymarket_bot.market_state import RollingState
 from polymarket_bot.models import BestBidAsk, OutcomeSide, Position, SignalAction
@@ -22,16 +22,42 @@ def _build_state(prices):
 
 
 class StrategyTests(unittest.TestCase):
+    def test_load_config_applies_profile_overrides(self):
+        handle, path = tempfile.mkstemp()
+        os.close(handle)
+        try:
+            with open(path, "w") as saved:
+                saved.write(
+                    json.dumps(
+                        {
+                            "market": {},
+                            "price_feed": {},
+                            "strategy": {"min_edge": 0.04},
+                            "execution": {"strategy_profile": "main"},
+                            "wallet": {},
+                            "logging": {},
+                            "profiles": {"tight": {"strategy": {"min_edge": 0.07}}},
+                        }
+                    )
+                )
+            config = load_config(path, profile="tight")
+            self.assertEqual(config.strategy.min_edge, 0.07)
+            self.assertEqual(config.execution.strategy_profile, "tight")
+        finally:
+            os.unlink(path)
+
     def test_build_report_summarizes_windows(self):
         report = build_report(
             [
                 {
+                    "strategyProfile": "main",
                     "strategyType": "fair_probability",
                     "realizedPnl": 1.5,
                     "closedAtMs": 1773407099026,
                     "activity": {"fillCount": 2},
                 },
                 {
+                    "strategyProfile": "tight",
                     "strategyType": None,
                     "realizedPnl": -0.5,
                     "closedAtMs": 1773407399005,
@@ -43,6 +69,7 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(report["summary"]["traded_windows"], 1)
         self.assertAlmostEqual(report["summary"]["total_realized_pnl"], 1.0)
         self.assertEqual(report["by_strategy"]["fair_probability"]["traded"], 1)
+        self.assertEqual(report["by_profile"]["main"]["traded"], 1)
 
     def test_archive_writer_appends_jsonl_records(self):
         handle, path = tempfile.mkstemp()

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.0 - 2026-03-13
+
+- Added named config `profiles` for controlled experiment overrides
+- Added CLI `--profile` selection for `inspect`, `run`, and `report`
+- Extended reports with `strategyProfile` summaries for version-to-version comparison
+
 ## v1.4.0 - 2026-03-13
 
 - Added `activity.jsonl` execution ledger with per-action and per-fill events

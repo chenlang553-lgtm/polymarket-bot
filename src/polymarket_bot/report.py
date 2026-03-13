@@ -16,10 +16,12 @@ def build_report(records):
     peak = 0.0
     max_drawdown = 0.0
     by_strategy = defaultdict(lambda: {"windows": 0, "traded": 0, "realized": 0.0})
+    by_profile = defaultdict(lambda: {"windows": 0, "traded": 0, "realized": 0.0})
     by_day = defaultdict(lambda: {"windows": 0, "traded": 0, "realized": 0.0})
 
     for record in records:
         strategy_type = record.get("strategyType") or "none"
+        strategy_profile = record.get("strategyProfile") or "default"
         realized = float(record.get("realizedPnl", 0.0) or 0.0)
         fill_count = int(record.get("activity", {}).get("fillCount", 0) or 0)
         closed_at_ms = int(record.get("closedAtMs", 0) or 0)
@@ -41,10 +43,13 @@ def build_report(records):
 
         by_strategy[strategy_type]["windows"] += 1
         by_strategy[strategy_type]["realized"] += realized
+        by_profile[strategy_profile]["windows"] += 1
+        by_profile[strategy_profile]["realized"] += realized
         by_day[closed_day]["windows"] += 1
         by_day[closed_day]["realized"] += realized
         if fill_count > 0:
             by_strategy[strategy_type]["traded"] += 1
+            by_profile[strategy_profile]["traded"] += 1
             by_day[closed_day]["traded"] += 1
 
     average_realized = 0.0 if total_windows == 0 else total_realized / total_windows
@@ -64,6 +69,7 @@ def build_report(records):
             "max_drawdown": max_drawdown,
         },
         "by_strategy": dict(sorted(by_strategy.items())),
+        "by_profile": dict(sorted(by_profile.items())),
         "by_day": dict(sorted(by_day.items())),
     }
 
@@ -89,6 +95,13 @@ def render_report(report):
         lines.append(
             "%s windows=%s traded=%s realized_pnl=%.4f"
             % (strategy_type, item["windows"], item["traded"], item["realized"])
+        )
+    lines.append("")
+    lines.append("BY_PROFILE")
+    for strategy_profile, item in report["by_profile"].items():
+        lines.append(
+            "%s windows=%s traded=%s realized_pnl=%.4f"
+            % (strategy_profile, item["windows"], item["traded"], item["realized"])
         )
     lines.append("")
     lines.append("BY_DAY")

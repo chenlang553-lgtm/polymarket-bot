@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from copy import deepcopy
 import json
 
 from .models import OutcomeSide
@@ -114,8 +115,25 @@ def _parse_datetime(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def load_config(path):
+def _deep_merge(base, override):
+    result = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def load_config(path, profile=None):
     raw = json.loads(Path(path).read_text())
+    if profile:
+        profiles = raw.get("profiles", {})
+        if profile not in profiles:
+            raise ValueError("unknown profile: %s" % profile)
+        raw = _deep_merge(raw, profiles[profile])
+        raw.setdefault("execution", {})
+        raw["execution"]["strategy_profile"] = profile
     market = raw.get("market", {})
     strategy = raw.get("strategy", {})
     return AppConfig(

@@ -36,7 +36,7 @@
   "execution": {
     "mode": "paper",
     "order_type": "fok",
-    "strategy_version": 3,
+    "strategy_version": 5,
     "strategy_profile": "main",
     "strategy_type": "fair_probability"
   },
@@ -51,5 +51,23 @@
     "active_only_last_seconds": 60,
     "window_close_path": "window_close.jsonl",
     "activity_path": "activity.jsonl"
+  },
+  "profiles": {
+    "main": {},
+    "tight_edge": {
+      "strategy": {
+        "min_edge": 0.06,
+        "max_spread": 0.02
+      }
+    },
+    "late_only": {
+      "strategy": {
+        "decision_window_start_seconds": 20,
+        "decision_window_end_seconds": 5
+      },
+      "logging": {
+        "active_only_last_seconds": 30
+      }
+    }
   }
 }

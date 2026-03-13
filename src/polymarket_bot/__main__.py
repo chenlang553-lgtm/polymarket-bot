@@ -14,9 +14,10 @@ def main():
     parser = argparse.ArgumentParser(prog="polymarket-bot")
     parser.add_argument("command", choices=["inspect", "run", "report"])
     parser.add_argument("--config", default="config.json")
+    parser.add_argument("--profile", default="")
     args = parser.parse_args()
 
-    config = load_config(args.config)
+    config = load_config(args.config, profile=args.profile or None)
     logging.basicConfig(
         level=getattr(logging, config.logging.level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
