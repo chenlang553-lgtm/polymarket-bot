@@ -37,9 +37,10 @@ class MarketConfig:
 
 
 class PriceFeedConfig:
-    def __init__(self, symbol="btcusdt", source_topic="crypto_prices"):
+    def __init__(self, symbol="btcusdt", source_topic="crypto_prices", provider="binance"):
         self.symbol = symbol
         self.source_topic = source_topic
+        self.provider = provider
 
 
 class StrategyConfig:

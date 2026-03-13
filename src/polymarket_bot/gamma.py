@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import re
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from .config import MarketConfig
 from .models import MarketDefinition
@@ -13,7 +13,14 @@ GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 
 def _get_json(path, params):
     query = urlencode({key: value for key, value in params.items() if value not in (None, "")})
-    with urlopen(f"{GAMMA_BASE_URL}{path}?{query}") as response:
+    request = Request(
+        f"{GAMMA_BASE_URL}{path}?{query}",
+        headers={
+            "User-Agent": "polymarket-bot/1.0",
+            "Accept": "application/json",
+        },
+    )
+    with urlopen(request) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -71,7 +78,12 @@ def resolve_market(config):
 
     market = payload[0]
     token_ids = market.get("clobTokenIds") or []
-    outcomes = [item.lower() for item in market.get("outcomes", [])]
+    outcomes = market.get("outcomes") or []
+    if isinstance(token_ids, str):
+        token_ids = json.loads(token_ids)
+    if isinstance(outcomes, str):
+        outcomes = json.loads(outcomes)
+    outcomes = [item.lower() for item in outcomes]
     if len(token_ids) < 2:
         raise RuntimeError("market is missing token IDs")
 

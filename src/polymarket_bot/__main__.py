@@ -6,7 +6,7 @@ from pprint import pprint
 from .app import TradingApplication
 from .archive import load_window_records
 from .config import load_config
-from .gamma import resolve_market
+from .gamma import current_window_start, resolve_market, resolve_market_for_window
 from .replay import run_replay
 from .report import run_report
 from .validate import render_validation, validate_config
@@ -27,7 +27,10 @@ def main():
     )
 
     if args.command == "inspect":
-        market = resolve_market(config.market)
+        if config.market.market_slug or config.market.condition_id or (config.market.yes_token_id and config.market.no_token_id):
+            market = resolve_market(config.market)
+        else:
+            market = resolve_market_for_window(config.market, current_window_start())
         pprint(market)
         return
 

@@ -12,7 +12,8 @@
   },
   "price_feed": {
     "symbol": "btcusdt",
-    "source_topic": "crypto_prices"
+    "source_topic": "crypto_prices",
+    "provider": "binance"
   },
   "strategy": {
     "decision_window_start_seconds": 45,

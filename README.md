@@ -4,7 +4,7 @@ Realtime trading bot for Polymarket BTC 5 minute binary markets.
 
 The project implements the strategy described in `/root/polymarket.md` as a production-style Python service:
 
-- Polymarket RTDS WebSocket for BTC spot price updates
+- Binance WebSocket for BTC spot price updates by default
 - Polymarket CLOB market WebSocket for order book updates
 - Gamma API bootstrap for market metadata and token IDs
 - Strategy engine for fair probability, edge, sizing, and exit logic
@@ -94,6 +94,6 @@ polymarket-bot run --config config.json --profile tight_edge
 ## Notes
 
 - The strategy assumes the market is a BTC 5 minute up/down contract where settlement is `BTC(T) > BTC(0)`.
-- Spot input comes from RTDS `crypto_prices` with `btcusdt` by default.
+- Spot input defaults to Binance `aggTrade` for `btcusdt`; RTDS remains available through `price_feed.provider`.
 - Order book input comes from the public market WebSocket `wss://ws-subscriptions-clob.polymarket.com/ws/market`.
 - Live execution uses the official Python CLOB client if installed.

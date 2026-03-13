@@ -10,6 +10,35 @@ from .models import BestBidAsk, PriceTick
 LOGGER = logging.getLogger(__name__)
 RTDS_URL = "wss://ws-live-data.polymarket.com"
 MARKET_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+BINANCE_WS_URL = "wss://stream.binance.com:9443/ws"
+
+
+async def price_stream(symbol, topic="crypto_prices", provider="binance"):
+    if provider == "binance":
+        async for tick in binance_price_stream(symbol):
+            yield tick
+        return
+    async for tick in rtds_price_stream(symbol, topic):
+        yield tick
+
+
+async def binance_price_stream(symbol):
+    stream_name = "%s@aggTrade" % symbol.lower()
+    while True:
+        try:
+            async with websockets.connect("%s/%s" % (BINANCE_WS_URL, stream_name), ping_interval=None) as websocket:
+                async for raw in websocket:
+                    payload = json.loads(raw)
+                    if payload.get("e") != "aggTrade":
+                        continue
+                    yield PriceTick(
+                        symbol=str(payload.get("s", symbol)).lower(),
+                        price=float(payload["p"]),
+                        timestamp_ms=int(payload.get("T", payload.get("E", 0))),
+                    )
+        except Exception as exc:
+            LOGGER.warning("Binance price connection dropped for %s: %s", symbol, exc)
+            await asyncio.sleep(2)
 
 
 async def rtds_price_stream(symbol, topic="crypto_prices"):
@@ -24,7 +53,7 @@ async def rtds_price_stream(symbol, topic="crypto_prices"):
                                 {
                                     "topic": topic,
                                     "type": "update" if topic == "crypto_prices" else "*",
-                                    "filters": symbol,
+                                    "filters": "[\"%s\"]" % symbol.lower(),
                                 }
                             ],
                         }
@@ -35,6 +64,8 @@ async def rtds_price_stream(symbol, topic="crypto_prices"):
                 try:
                     async for raw in websocket:
                         payload = json.loads(raw)
+                        if not payload:
+                            continue
                         if payload.get("topic") != topic:
                             continue
                         inner = payload.get("payload", {})
@@ -67,11 +98,15 @@ async def market_book_stream(asset_id):
                     )
                 )
                 async for raw in websocket:
-                    message = json.loads(raw)
-                    event_type = message.get("event_type")
-                    if event_type not in {"book", "price_change", "best_bid_ask"}:
-                        continue
-                    yield _parse_book_like_message(message, asset_id)
+                    payload = json.loads(raw)
+                    messages = payload if isinstance(payload, list) else [payload]
+                    for message in messages:
+                        if not isinstance(message, dict):
+                            continue
+                        event_type = message.get("event_type")
+                        if event_type not in {"book", "price_change", "best_bid_ask"}:
+                            continue
+                        yield _parse_book_like_message(message, asset_id)
         except Exception as exc:
             LOGGER.warning("Market WebSocket dropped for %s: %s", asset_id, exc)
             await asyncio.sleep(2)

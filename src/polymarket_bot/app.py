@@ -11,7 +11,7 @@ from .market_state import RollingState
 from .models import BestBidAsk, OutcomeSide, RuntimeHealth, RuntimeState, SignalAction, WindowStats
 from .strategy import StrategyEngine, default_size_buckets
 from .validate import validate_config
-from .ws import market_book_stream, rtds_price_stream
+from .ws import market_book_stream, price_stream
 
 
 LOGGER = logging.getLogger(__name__)
@@ -91,7 +91,11 @@ class TradingApplication:
     async def _consume_prices(self):
         await self._queue.put(("price_stream_event", {"event": "connect"}))
         try:
-            async for tick in rtds_price_stream(self.config.price_feed.symbol, self.config.price_feed.source_topic):
+            async for tick in price_stream(
+                self.config.price_feed.symbol,
+                self.config.price_feed.source_topic,
+                self.config.price_feed.provider,
+            ):
                 await self._queue.put(("price", tick))
         except Exception as exc:
             await self._queue.put(("price_stream_event", {"event": "error", "message": str(exc)}))

@@ -33,7 +33,7 @@ class StrategyTests(unittest.TestCase):
                     json.dumps(
                         {
                             "market": {},
-                            "price_feed": {},
+                            "price_feed": {"provider": "binance"},
                             "strategy": {"min_edge": 0.04},
                             "execution": {"strategy_profile": "main"},
                             "wallet": {},
@@ -57,7 +57,7 @@ class StrategyTests(unittest.TestCase):
                     json.dumps(
                         {
                             "market": {"slug_prefix": "btc-updown-5m"},
-                            "price_feed": {"symbol": "btcusdt"},
+                            "price_feed": {"symbol": "btcusdt", "provider": "binance"},
                             "strategy": {
                                 "decision_window_start_seconds": 5,
                                 "decision_window_end_seconds": 10,
@@ -90,7 +90,7 @@ class StrategyTests(unittest.TestCase):
                     json.dumps(
                         {
                             "market": {"slug_prefix": "btc-updown-5m"},
-                            "price_feed": {"symbol": "btcusdt"},
+                            "price_feed": {"symbol": "btcusdt", "provider": "binance"},
                             "strategy": {
                                 "decision_window_start_seconds": 45,
                                 "decision_window_end_seconds": 8,

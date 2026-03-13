@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.10.0 - 2026-03-13
+
+- Fixed Gamma API access by adding explicit request headers
+- Fixed Gamma market parsing for string-encoded `clobTokenIds` and `outcomes`
+- Switched default BTC spot feed to Binance websocket for reliable live startup
+- Updated market websocket parsing to support list-form batch messages
+
 ## v1.9.0 - 2026-03-13
 
 - Added supervisor-style restarts for failed background stream tasks
