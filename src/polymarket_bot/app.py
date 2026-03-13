@@ -536,14 +536,25 @@ class TradingApplication:
         fallback_book = self._last_usable_books.get(asset_id)
         if latest_book is None and fallback_book is None:
             return BestBidAsk(asset_id=asset_id, bid=None, ask=None)
-        current = latest_book or fallback_book
-        if fallback_book is None:
-            return current
-        max_age_ms = int(self.config.strategy.book_fallback_max_age_seconds * 1000)
+
         reference_ms = int(now.timestamp() * 1000)
-        if fallback_book.timestamp_ms and (reference_ms - fallback_book.timestamp_ms) > max_age_ms:
-            return current
-        return current
+        max_age_ms = int(self.config.strategy.book_fallback_max_age_seconds * 1000)
+
+        if latest_book is not None:
+            if latest_book.timestamp_ms:
+                if (reference_ms - latest_book.timestamp_ms) <= max_age_ms:
+                    return latest_book
+            else:
+                return latest_book
+
+        if fallback_book is not None:
+            if fallback_book.timestamp_ms:
+                if (reference_ms - fallback_book.timestamp_ms) <= max_age_ms:
+                    return fallback_book
+            else:
+                return fallback_book
+
+        return BestBidAsk(asset_id=asset_id, bid=None, ask=None)
 
     def _start_background_tasks(self):
         self._tasks["prices"] = asyncio.create_task(self._consume_prices())
