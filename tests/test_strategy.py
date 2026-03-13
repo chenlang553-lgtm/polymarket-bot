@@ -4,6 +4,7 @@ import json
 import tempfile
 import os
 
+from polymarket_bot.app import TradingApplication
 from polymarket_bot.archive import JsonlWriter, WindowArchiveWriter
 from polymarket_bot.config import StrategyConfig, load_config
 from polymarket_bot.gamma import build_market_slug
@@ -164,21 +165,19 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(merged.bid, 0.45)
         self.assertEqual(merged.ask, 0.47)
 
-    def test_market_price_priority(self):
-        midpoint_book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, last_trade_price=0.40)
-        self.assertAlmostEqual(midpoint_book.market_price(), 0.46)
+    def test_compute_snapshot_uses_executable_ask_prices(self):
+        config = StrategyConfig(size_buckets=default_size_buckets())
+        engine = StrategyEngine(config)
+        state = _build_state([100.0 + i * 0.1 for i in range(80)])
+        yes_book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, bid_size=100.0, ask_size=100.0)
+        no_book = BestBidAsk(asset_id="no", bid=0.53, ask=0.55, bid_size=100.0, ask_size=100.0)
 
-        trade_book = BestBidAsk(asset_id="yes", bid=None, ask=None, last_trade_price=0.41)
-        self.assertEqual(trade_book.market_price(), 0.41)
+        snapshot = engine.compute_snapshot(state, yes_book, no_book, tau_seconds=20)
 
-        bid_only_book = BestBidAsk(asset_id="yes", bid=0.39, ask=None)
-        self.assertEqual(bid_only_book.market_price(), 0.39)
-
-        ask_only_book = BestBidAsk(asset_id="yes", bid=None, ask=0.52)
-        self.assertEqual(ask_only_book.market_price(), 0.52)
-
-        empty_book = BestBidAsk(asset_id="yes", bid=None, ask=None)
-        self.assertIsNone(empty_book.market_price())
+        self.assertEqual(snapshot.yes_price, 0.47)
+        self.assertEqual(snapshot.no_price, 0.55)
+        self.assertAlmostEqual(snapshot.edge_yes, snapshot.fair_yes - yes_book.ask)
+        self.assertAlmostEqual(snapshot.edge_no, snapshot.fair_no - no_book.ask)
 
     def test_execution_price_does_not_fall_back_to_bid(self):
         ask_book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, last_trade_price=0.40)
@@ -194,6 +193,83 @@ class StrategyTests(unittest.TestCase):
         book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, last_trade_price=0.40)
         self.assertEqual(book.execution_price_for(0.46), 0.47)
         self.assertEqual(book.execution_price_for(0.52), 0.52)
+
+    def test_effective_book_rejects_stale_quotes(self):
+        app = TradingApplication.__new__(TradingApplication)
+
+        class _Strategy:
+            book_fallback_max_age_seconds = 3
+
+        class _Config:
+            strategy = _Strategy()
+
+        app.config = _Config()
+
+        now = datetime(2026, 1, 1, 0, 0, 10, tzinfo=timezone.utc)
+        fresh_ms = int(now.timestamp() * 1000) - 1000
+        stale_ms = int(now.timestamp() * 1000) - 10000
+
+        app._latest_books = {
+            "yes": BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, bid_size=5, ask_size=5, timestamp_ms=stale_ms)
+        }
+        app._last_usable_books = {
+            "yes": BestBidAsk(asset_id="yes", bid=0.46, ask=0.48, bid_size=5, ask_size=5, timestamp_ms=fresh_ms)
+        }
+
+        chosen = app._effective_book("yes", now)
+        self.assertEqual(chosen.ask, 0.48)
+
+        app._latest_books = {
+            "yes": BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, bid_size=5, ask_size=5, timestamp_ms=stale_ms)
+        }
+        app._last_usable_books = {
+            "yes": BestBidAsk(asset_id="yes", bid=0.46, ask=0.48, bid_size=5, ask_size=5, timestamp_ms=stale_ms)
+        }
+
+        chosen = app._effective_book("yes", now)
+        self.assertIsNone(chosen.ask)
+        self.assertIsNone(chosen.bid)
+
+    def test_live_close_position_posts_sell_order(self):
+        from polymarket_bot.execution import LiveExecutor
+
+        posted = []
+
+        class FakeClient:
+            def create_market_order(self, order):
+                return {"signed": order}
+
+            def post_order(self, signed, order_type):
+                posted.append((signed, order_type))
+
+        class FakeOrder:
+            def __init__(self, token_id, amount, side, order_type):
+                self.token_id = token_id
+                self.amount = amount
+                self.side = side
+                self.order_type = order_type
+
+        class FakeOrderType:
+            FOK = "fok"
+
+        executor = LiveExecutor.__new__(LiveExecutor)
+        executor.execution = type("Exec", (), {"order_type": "fok"})()
+        executor._market_order_args_cls = FakeOrder
+        executor._order_type_cls = FakeOrderType
+        executor._sell_constant = "SELL"
+        executor._client = FakeClient()
+
+        market = type("Market", (), {"yes_token_id": "Y", "no_token_id": "N"})()
+        position = Position(side=OutcomeSide.NO, size=1.25, entry_price=0.6, edge_at_entry=0.08, opened_at=datetime.now(timezone.utc))
+
+        executor.close_position(market, position)
+
+        self.assertEqual(len(posted), 1)
+        signed, order_type = posted[0]
+        self.assertEqual(order_type, "fok")
+        self.assertEqual(signed["signed"].token_id, "N")
+        self.assertEqual(signed["signed"].amount, 1.25)
+        self.assertEqual(signed["signed"].side, "SELL")
 
     def test_book_message_uses_true_best_bid_and_ask(self):
         book = _parse_book_like_message(
