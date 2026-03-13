@@ -206,8 +206,20 @@ class TradingApplication:
             self._window_stats.mark_position(None, 0.0)
 
         if signal.action in {SignalAction.OPEN, SignalAction.FLIP}:
-            entry_price = snapshot.yes_price if signal.side == OutcomeSide.YES else snapshot.no_price
+            selected_book = yes_book if signal.side == OutcomeSide.YES else no_book
+            entry_price = selected_book.execution_price()
             if entry_price is None:
+                LOGGER.info(
+                    "STRATEGY action=%s side=%s size=%.4f reason=missing_execution_price tau=%.1f fair_yes=%.3f fair_no=%.3f edge_yes=%s edge_no=%s",
+                    signal.action.value,
+                    signal.side.value,
+                    signal.size,
+                    tau_seconds,
+                    snapshot.fair_yes,
+                    snapshot.fair_no,
+                    _fmt(snapshot.edge_yes),
+                    _fmt(snapshot.edge_no),
+                )
                 return
             self._window_stats.record_action(signal.action.value.upper(), signal.size, self.config.execution.strategy_type, "filled")
             self._window_stats.record_fill(signal.side, signal.size, entry_price)

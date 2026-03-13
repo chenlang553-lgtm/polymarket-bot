@@ -61,6 +61,12 @@
 - Added CLI `--profile` selection for `inspect`, `run`, and `report`
 - Extended reports with `strategyProfile` summaries for version-to-version comparison
 
+## v1.18.0 - 2026-03-14
+
+- Fixed execution pricing so orders no longer fall back to `bestBid` when buying an outcome
+- Separated snapshot market price from execution price to avoid fake fills like `0.005`
+- Execution now uses `bestAsk -> lastTradePrice -> null`
+
 ## v1.17.0 - 2026-03-14
 
 - Changed `yes_price` and `no_price` to use the priority `midpoint -> lastTradePrice -> bestBid -> bestAsk -> null`

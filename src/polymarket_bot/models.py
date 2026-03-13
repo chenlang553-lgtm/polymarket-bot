@@ -81,6 +81,13 @@ class BestBidAsk:
             return self.ask
         return None
 
+    def execution_price(self):
+        if self.ask is not None:
+            return self.ask
+        if self.last_trade_price is not None:
+            return self.last_trade_price
+        return None
+
     def tradable(self, max_spread=None, min_size=0.0) -> bool:
         if not self.is_valid(max_spread=max_spread, min_size=min_size):
             return self.market_price() is not None

@@ -179,6 +179,16 @@ class StrategyTests(unittest.TestCase):
         empty_book = BestBidAsk(asset_id="yes", bid=None, ask=None)
         self.assertIsNone(empty_book.market_price())
 
+    def test_execution_price_does_not_fall_back_to_bid(self):
+        ask_book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, last_trade_price=0.40)
+        self.assertEqual(ask_book.execution_price(), 0.47)
+
+        trade_book = BestBidAsk(asset_id="yes", bid=None, ask=None, last_trade_price=0.41)
+        self.assertEqual(trade_book.execution_price(), 0.41)
+
+        bid_only_book = BestBidAsk(asset_id="yes", bid=0.39, ask=None)
+        self.assertIsNone(bid_only_book.execution_price())
+
     def test_archive_writer_appends_jsonl_records(self):
         handle, path = tempfile.mkstemp()
         os.close(handle)
