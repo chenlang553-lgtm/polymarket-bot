@@ -12,6 +12,7 @@ from polymarket_bot.models import BestBidAsk, OutcomeSide, Position, SignalActio
 from polymarket_bot.replay import format_replay_line, run_replay
 from polymarket_bot.report import build_report
 from polymarket_bot.strategy import StrategyEngine, default_size_buckets
+from polymarket_bot.validate import validate_config
 
 
 def _build_state(prices):
@@ -44,6 +45,39 @@ class StrategyTests(unittest.TestCase):
             config = load_config(path, profile="tight")
             self.assertEqual(config.strategy.min_edge, 0.07)
             self.assertEqual(config.execution.strategy_profile, "tight")
+        finally:
+            os.unlink(path)
+
+    def test_validate_config_catches_invalid_windows(self):
+        handle, path = tempfile.mkstemp()
+        os.close(handle)
+        try:
+            with open(path, "w") as saved:
+                saved.write(
+                    json.dumps(
+                        {
+                            "market": {"slug_prefix": "btc-updown-5m"},
+                            "price_feed": {"symbol": "btcusdt"},
+                            "strategy": {
+                                "decision_window_start_seconds": 5,
+                                "decision_window_end_seconds": 10,
+                                "min_edge": 0.04,
+                                "max_spread": 0.03,
+                                "min_top_of_book_size": 1
+                            },
+                            "execution": {"mode": "paper"},
+                            "wallet": {},
+                            "logging": {
+                                "window_close_path": "window_close.jsonl",
+                                "activity_path": "activity.jsonl",
+                                "market_state_path": "market_state.jsonl"
+                            }
+                        }
+                    )
+                )
+            config = load_config(path)
+            result = validate_config(config)
+            self.assertTrue(result["errors"])
         finally:
             os.unlink(path)
 

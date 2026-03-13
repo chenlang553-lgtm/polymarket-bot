@@ -10,6 +10,7 @@ from .gamma import current_window_start, next_window_start, resolve_market, reso
 from .market_state import RollingState
 from .models import BestBidAsk, OutcomeSide, RuntimeState, SignalAction, WindowStats
 from .strategy import StrategyEngine, default_size_buckets
+from .validate import validate_config
 from .ws import market_book_stream, rtds_price_stream
 
 
@@ -39,6 +40,7 @@ class TradingApplication:
         self._window_stats = WindowStats()
 
     async def run(self):
+        self._startup_check()
         producers = [
             asyncio.create_task(self._consume_prices()),
         ]
@@ -61,6 +63,24 @@ class TradingApplication:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+
+    def _startup_check(self):
+        validation = validate_config(self.config)
+        if validation["errors"]:
+            for item in validation["errors"]:
+                LOGGER.error("STARTUP_CHECK error=%s", item)
+            raise RuntimeError("configuration validation failed")
+        for item in validation["warnings"]:
+            LOGGER.warning("STARTUP_CHECK warning=%s", item)
+        LOGGER.info(
+            "STARTUP_CHECK mode=%s profile=%s market_ref=%s active_only_last_seconds=%s decision_window=%s-%s",
+            self.config.execution.mode,
+            self.config.execution.strategy_profile,
+            self.config.market.market_slug or self.config.market.condition_id or self.config.market.slug_prefix,
+            self.config.logging.active_only_last_seconds,
+            self.config.strategy.decision_window_start_seconds,
+            self.config.strategy.decision_window_end_seconds,
+        )
 
     async def _consume_prices(self):
         async for tick in rtds_price_stream(self.config.price_feed.symbol, self.config.price_feed.source_topic):

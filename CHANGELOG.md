@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.7.0 - 2026-03-13
+
+- Added `validate` CLI command for startup-time configuration checks
+- Added runtime startup self-check logging before the bot begins processing streams
+- Added validation coverage for window timing, execution mode, and archive path sanity
+
 ## v1.6.0 - 2026-03-13
 
 - Added `market_state.jsonl` recording for active-window state snapshots and window lifecycle events

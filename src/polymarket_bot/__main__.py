@@ -9,11 +9,12 @@ from .config import load_config
 from .gamma import resolve_market
 from .replay import run_replay
 from .report import run_report
+from .validate import render_validation, validate_config
 
 
 def main():
     parser = argparse.ArgumentParser(prog="polymarket-bot")
-    parser.add_argument("command", choices=["inspect", "run", "report", "replay"])
+    parser.add_argument("command", choices=["inspect", "run", "report", "replay", "validate"])
     parser.add_argument("--config", default="config.json")
     parser.add_argument("--profile", default="")
     parser.add_argument("--limit", type=int, default=0)
@@ -36,6 +37,13 @@ def main():
 
     if args.command == "replay":
         print(run_replay(config.logging.market_state_path, limit=args.limit))
+        return
+
+    if args.command == "validate":
+        result = validate_config(config)
+        print(render_validation(result))
+        if result["errors"]:
+            raise SystemExit(1)
         return
 
     app = TradingApplication(config)
