@@ -154,6 +154,18 @@ class RuntimeState:
         self.recent_trade_signs = recent_trade_signs or []
 
 
+class RuntimeHealth:
+    def __init__(self):
+        self.price_updates = 0
+        self.book_updates = 0
+        self.price_reconnects = 0
+        self.book_reconnects = 0
+        self.last_price_at_ms = 0
+        self.last_book_at_ms = 0
+        self.last_health_log_at_ms = 0
+        self.last_error = ""
+
+
 class WindowStats:
     def __init__(self):
         self.total_cost = 0.0

@@ -29,6 +29,10 @@ def validate_config(config):
         errors.append("logging.activity_path is required")
     if not config.logging.market_state_path:
         errors.append("logging.market_state_path is required")
+    if config.logging.health_log_interval_seconds <= 0:
+        errors.append("logging.health_log_interval_seconds must be positive")
+    if config.logging.stale_data_threshold_seconds <= 0:
+        errors.append("logging.stale_data_threshold_seconds must be positive")
     if not config.price_feed.symbol:
         errors.append("price_feed.symbol is required")
 

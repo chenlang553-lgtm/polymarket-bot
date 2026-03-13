@@ -8,7 +8,7 @@ from .config import AppConfig
 from .execution import build_executor
 from .gamma import current_window_start, next_window_start, resolve_market, resolve_market_for_window
 from .market_state import RollingState
-from .models import BestBidAsk, OutcomeSide, RuntimeState, SignalAction, WindowStats
+from .models import BestBidAsk, OutcomeSide, RuntimeHealth, RuntimeState, SignalAction, WindowStats
 from .strategy import StrategyEngine, default_size_buckets
 from .validate import validate_config
 from .ws import market_book_stream, rtds_price_stream
@@ -24,6 +24,7 @@ class TradingApplication:
         self.config = config
         self.market = self._resolve_initial_market()
         self.state = RuntimeState(market=self.market)
+        self.health = RuntimeHealth()
         self.roll = RollingState(config.strategy)
         self.strategy = StrategyEngine(config.strategy)
         self.executor = build_executor(config.execution, config.wallet)
@@ -46,6 +47,7 @@ class TradingApplication:
         ]
         self._book_task = asyncio.create_task(self._consume_books(self._active_asset_id()))
         producers.append(self._book_task)
+        producers.append(asyncio.create_task(self._health_loop()))
         try:
             while True:
                 kind, payload = await self._queue.get()
@@ -54,6 +56,12 @@ class TradingApplication:
                 elif kind == "book":
                     if payload.asset_id == self._active_asset_id():
                         self._latest_book = payload
+                        self.health.book_updates += 1
+                        self.health.last_book_at_ms = payload.timestamp_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
+                elif kind == "price_stream_event":
+                    self._handle_stream_event("price", payload)
+                elif kind == "book_stream_event":
+                    self._handle_stream_event("book", payload)
                 if self._latest_book is not None and self.roll.open_price is not None:
                     self._tick()
                 else:
@@ -83,12 +91,22 @@ class TradingApplication:
         )
 
     async def _consume_prices(self):
-        async for tick in rtds_price_stream(self.config.price_feed.symbol, self.config.price_feed.source_topic):
-            await self._queue.put(("price", tick))
+        await self._queue.put(("price_stream_event", {"event": "connect"}))
+        try:
+            async for tick in rtds_price_stream(self.config.price_feed.symbol, self.config.price_feed.source_topic):
+                await self._queue.put(("price", tick))
+        except Exception as exc:
+            await self._queue.put(("price_stream_event", {"event": "error", "message": str(exc)}))
+            raise
 
     async def _consume_books(self, asset_id):
-        async for book in market_book_stream(asset_id):
-            await self._queue.put(("book", book))
+        await self._queue.put(("book_stream_event", {"event": "connect", "asset_id": asset_id}))
+        try:
+            async for book in market_book_stream(asset_id):
+                await self._queue.put(("book", book))
+        except Exception as exc:
+            await self._queue.put(("book_stream_event", {"event": "error", "message": str(exc), "asset_id": asset_id}))
+            raise
 
     def _handle_price(self, tick):
         from .models import PriceTick
@@ -96,8 +114,29 @@ class TradingApplication:
         if not isinstance(tick, PriceTick):
             return
         self._latest_spot_price = tick.price
+        self.health.price_updates += 1
+        self.health.last_price_at_ms = tick.timestamp_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
         x_t = self.roll.update_price(tick.price)
         LOGGER.debug("spot tick symbol=%s price=%.2f x_t=%.6f", tick.symbol, tick.price, x_t)
+
+    def _handle_stream_event(self, stream_name, payload):
+        event = payload.get("event")
+        if stream_name == "price":
+            if event == "connect":
+                self.health.price_reconnects += 1
+            elif event == "error":
+                self.health.last_error = "price:%s" % payload.get("message", "")
+        elif stream_name == "book":
+            if event == "connect":
+                self.health.book_reconnects += 1
+            elif event == "error":
+                self.health.last_error = "book:%s" % payload.get("message", "")
+
+    async def _health_loop(self):
+        interval = max(5, int(self.config.logging.health_log_interval_seconds))
+        while True:
+            await asyncio.sleep(interval)
+            self._log_health()
 
     def _tick(self):
         if self.market.start_time is None or self.market.end_time is None:
@@ -268,6 +307,7 @@ class TradingApplication:
                 int(tau_seconds - self.config.logging.active_only_last_seconds),
                 _fmt(self._latest_spot_price),
             )
+            self._log_health(now)
 
     def _resolve_initial_market(self):
         if self.config.market.market_slug or self.config.market.condition_id or (self.config.market.yes_token_id and self.config.market.no_token_id):
@@ -319,6 +359,7 @@ class TradingApplication:
                 "endTime": self.market.end_time.isoformat() if self.market.end_time else None,
             }
         )
+        self._log_health()
 
     def _roll_to_next_window(self, now):
         if not self.config.market.auto_roll_windows:
@@ -410,9 +451,41 @@ class TradingApplication:
             return "Up" if self._window_stats.last_fair_yes >= 0.5 else "Down"
         return "Down"
 
+    def _log_health(self, now=None):
+        now = now or datetime.now(timezone.utc)
+        now_ms = int(now.timestamp() * 1000)
+        interval_ms = max(1000, int(self.config.logging.health_log_interval_seconds * 1000))
+        if now_ms - self.health.last_health_log_at_ms < interval_ms:
+            return
+        self.health.last_health_log_at_ms = now_ms
+        price_lag_ms = None if self.health.last_price_at_ms == 0 else max(0, now_ms - self.health.last_price_at_ms)
+        book_lag_ms = None if self.health.last_book_at_ms == 0 else max(0, now_ms - self.health.last_book_at_ms)
+        stale_threshold_ms = int(self.config.logging.stale_data_threshold_seconds * 1000)
+        status = "ok"
+        if (price_lag_ms is not None and price_lag_ms > stale_threshold_ms) or (book_lag_ms is not None and book_lag_ms > stale_threshold_ms):
+            status = "stale"
+        LOGGER.info(
+            "HEALTH status=%s window=%s price_updates=%s book_updates=%s price_reconnects=%s book_reconnects=%s price_lag_ms=%s book_lag_ms=%s last_error=%s",
+            status,
+            self.market.slug or self.market.condition_id,
+            self.health.price_updates,
+            self.health.book_updates,
+            self.health.price_reconnects,
+            self.health.book_reconnects,
+            _fmt_int(price_lag_ms),
+            _fmt_int(book_lag_ms),
+            self.health.last_error or "none",
+        )
+
 
 
 def _fmt(value):
     if value is None:
         return "None"
     return f"{value:.4f}"
+
+
+def _fmt_int(value):
+    if value is None:
+        return "None"
+    return str(int(value))

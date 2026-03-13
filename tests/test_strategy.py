@@ -81,6 +81,41 @@ class StrategyTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_validate_accepts_health_logging_fields(self):
+        handle, path = tempfile.mkstemp()
+        os.close(handle)
+        try:
+            with open(path, "w") as saved:
+                saved.write(
+                    json.dumps(
+                        {
+                            "market": {"slug_prefix": "btc-updown-5m"},
+                            "price_feed": {"symbol": "btcusdt"},
+                            "strategy": {
+                                "decision_window_start_seconds": 45,
+                                "decision_window_end_seconds": 8,
+                                "min_edge": 0.04,
+                                "max_spread": 0.03,
+                                "min_top_of_book_size": 1
+                            },
+                            "execution": {"mode": "paper"},
+                            "wallet": {},
+                            "logging": {
+                                "window_close_path": "window_close.jsonl",
+                                "activity_path": "activity.jsonl",
+                                "market_state_path": "market_state.jsonl",
+                                "health_log_interval_seconds": 15,
+                                "stale_data_threshold_seconds": 10
+                            }
+                        }
+                    )
+                )
+            config = load_config(path)
+            result = validate_config(config)
+            self.assertFalse(result["errors"])
+        finally:
+            os.unlink(path)
+
     def test_build_report_summarizes_windows(self):
         report = build_report(
             [

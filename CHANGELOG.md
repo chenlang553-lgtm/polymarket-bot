@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.8.0 - 2026-03-13
+
+- Added periodic `HEALTH` logs with update counts, reconnect counts, and stale-data lag metrics
+- Added runtime tracking for latest price/book timestamps and last stream error
+- Improved operational visibility during long-running sessions and reconnect cycles
+
 ## v1.7.0 - 2026-03-13
 
 - Added `validate` CLI command for startup-time configuration checks
