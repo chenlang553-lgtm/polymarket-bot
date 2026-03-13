@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.14.0 - 2026-03-13
+
+- Enriched `collecting` phase logs with up/down prices, `x_t`, and current position
+
 ## v1.13.0 - 2026-03-13
 
 - Added explicit market metadata logs on window activation for token-side debugging

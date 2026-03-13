@@ -309,12 +309,30 @@ class TradingApplication:
         if tau_seconds <= 0:
             return
         if tau_seconds > self.config.logging.active_only_last_seconds:
+            effective_book = self._effective_book(now)
+            yes_bid = effective_book.bid
+            yes_ask = effective_book.ask
+            no_bid = None if yes_ask is None else max(0.0, 1.0 - yes_ask)
+            no_ask = None if yes_bid is None else max(0.0, 1.0 - yes_bid)
+            position = "flat"
+            if self.state.position is not None:
+                position = "%s@%.4f x %.4f" % (
+                    self.state.position.side.value,
+                    self.state.position.entry_price,
+                    self.state.position.size,
+                )
             LOGGER.info(
-                "WINDOW window=%s phase=collecting tau=%ss active_in=%ss spot=%s",
+                "WINDOW window=%s phase=collecting tau=%ss active_in=%ss spot=%s x_t=%s yes_bid=%s yes_ask=%s no_bid=%s no_ask=%s pos=%s",
                 self.market.slug or self.market.condition_id,
                 int(tau_seconds),
                 int(tau_seconds - self.config.logging.active_only_last_seconds),
                 _fmt(self._latest_spot_price),
+                _fmt(self.roll.latest_x()),
+                _fmt(yes_bid),
+                _fmt(yes_ask),
+                _fmt(no_bid),
+                _fmt(no_ask),
+                position,
             )
             self._log_health(now)
 
