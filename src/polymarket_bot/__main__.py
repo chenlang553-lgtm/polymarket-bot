@@ -1,11 +1,12 @@
 import argparse
 import asyncio
 import logging
+import os
 from pprint import pprint
 
 from .app import TradingApplication
 from .archive import load_window_records
-from .config import load_config
+from .config import apply_iteration_paths, load_config
 from .gamma import current_window_start, resolve_market, resolve_market_for_window
 from .replay import run_replay
 from .report import run_report
@@ -17,10 +18,12 @@ def main():
     parser.add_argument("command", choices=["inspect", "run", "report", "replay", "validate"])
     parser.add_argument("--config", default="config.json")
     parser.add_argument("--profile", default="")
+    parser.add_argument("--iteration", default="")
     parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
 
     config = load_config(args.config, profile=args.profile or None)
+    runtime_paths = apply_iteration_paths(config, args.iteration or "", os.path.dirname(os.path.abspath(args.config)))
     logging.basicConfig(
         level=getattr(logging, config.logging.level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",

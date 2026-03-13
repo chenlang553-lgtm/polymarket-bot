@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.12.0 - 2026-03-13
+
+- Added `--iteration` runtime option to route logs and JSONL data into per-iteration directories
+- Added `logs/<iteration>/service.log` and `data/<iteration>/` layout for cleaner experiment management
+- Updated `.gitignore` to exclude generated runtime logs and datasets
+
 ## v1.11.0 - 2026-03-13
 
 - Added final-seconds EMA smoothing for `fair_yes` to reduce single-tick probability whipsaws

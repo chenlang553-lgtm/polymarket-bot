@@ -1,6 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 from copy import deepcopy
+import os
 import json
 
 from .models import OutcomeSide
@@ -119,6 +120,23 @@ class AppConfig:
         self.execution = execution
         self.wallet = wallet
         self.logging = logging
+
+
+def apply_iteration_paths(config, iteration, project_root):
+    if not iteration:
+        return config
+    logs_dir = os.path.join(project_root, "logs", iteration)
+    data_dir = os.path.join(project_root, "data", iteration)
+    os.makedirs(logs_dir, exist_ok=True)
+    os.makedirs(data_dir, exist_ok=True)
+    config.logging.window_close_path = os.path.join(data_dir, "window_close.jsonl")
+    config.logging.activity_path = os.path.join(data_dir, "activity.jsonl")
+    config.logging.market_state_path = os.path.join(data_dir, "market_state.jsonl")
+    return {
+        "logs_dir": logs_dir,
+        "data_dir": data_dir,
+        "service_log_path": os.path.join(logs_dir, "service.log"),
+    }
 
 
 def _parse_datetime(value):
