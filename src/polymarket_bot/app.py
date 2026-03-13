@@ -3,7 +3,7 @@ from contextlib import suppress
 from datetime import datetime, timezone
 import logging
 
-from .archive import WindowArchiveWriter
+from .archive import JsonlWriter, WindowArchiveWriter
 from .config import AppConfig
 from .execution import build_executor
 from .gamma import current_window_start, next_window_start, resolve_market, resolve_market_for_window
@@ -27,6 +27,7 @@ class TradingApplication:
         self.strategy = StrategyEngine(config.strategy)
         self.executor = build_executor(config.execution, config.wallet)
         self.archive = WindowArchiveWriter(config.logging.window_close_path)
+        self.activity_archive = JsonlWriter(config.logging.activity_path)
         self._latest_book = None
         self._latest_trade_imbalance = 0.0
         self._queue = asyncio.Queue()
@@ -110,6 +111,17 @@ class TradingApplication:
 
         if signal.action in {SignalAction.CLOSE, SignalAction.FLIP} and self.state.position is not None:
             self._window_stats.record_action(signal.action.value.upper(), self.state.position.size, self.config.execution.strategy_type, "filled")
+            self._window_stats.mark_execution_event()
+            self._write_activity_event(
+                now=now,
+                event_type="execution",
+                action=signal.action.value,
+                side=self.state.position.side,
+                size=self.state.position.size,
+                price=self.state.position.entry_price,
+                reason=signal.reason,
+                snapshot=snapshot,
+            )
             LOGGER.info(
                 "STRATEGY action=%s side=%s size=%.4f reason=%s tau=%.1f fair_yes=%.3f fair_no=%.3f edge_yes=%s edge_no=%s",
                 signal.action.value,
@@ -124,11 +136,23 @@ class TradingApplication:
             )
             self.executor.close_position(self.market, self.state.position)
             self.state.position = None
+            self._window_stats.mark_position(None, 0.0)
 
         if signal.action in {SignalAction.OPEN, SignalAction.FLIP}:
             ask_price = self._latest_book.ask if signal.side == OutcomeSide.YES else max(0.001, 1.0 - (self._latest_book.bid or 0.0))
             self._window_stats.record_action(signal.action.value.upper(), signal.size, self.config.execution.strategy_type, "filled")
             self._window_stats.record_fill(signal.side, signal.size, ask_price)
+            self._window_stats.mark_execution_event()
+            self._write_activity_event(
+                now=now,
+                event_type="fill",
+                action=signal.action.value,
+                side=signal.side,
+                size=signal.size,
+                price=ask_price,
+                reason=signal.reason,
+                snapshot=snapshot,
+            )
             LOGGER.info(
                 "STRATEGY action=%s side=%s size=%.4f reason=%s tau=%.1f ask=%.4f fair_yes=%.3f fair_no=%.3f edge_yes=%s edge_no=%s",
                 signal.action.value,
@@ -143,6 +167,7 @@ class TradingApplication:
                 _fmt(snapshot.edge_no),
             )
             self.state.position = self.executor.open_position(self.market, signal, ask_price)
+            self._window_stats.mark_position(signal.side, signal.size)
 
     def _log_status(self, now, snapshot):
         current_second = int(now.timestamp())
@@ -256,6 +281,7 @@ class TradingApplication:
     def _archive_window(self, now):
         final_direction = self._infer_final_direction()
         summary = self._window_stats.finalize(final_direction)
+        inferred_winner = "Up" if (self._window_stats.last_fair_yes or 0.0) >= 0.5 else "Down"
         record = {
             "recordType": "window_close",
             "strategyVersion": self.config.execution.strategy_version,
@@ -266,7 +292,7 @@ class TradingApplication:
             "closedAtMs": int(now.timestamp() * 1000),
             "timeToExpirySec": 0,
             "finalDirection": final_direction,
-            "inferredWinner": final_direction,
+            "inferredWinner": inferred_winner,
             "actualWinner": final_direction,
             "resolutionSource": "inferred-final-price",
         }
@@ -280,6 +306,31 @@ class TradingApplication:
             summary["activity"]["fillCount"],
             self.config.logging.window_close_path,
         )
+
+    def _write_activity_event(self, now, event_type, action, side, size, price, reason, snapshot):
+        record = {
+            "recordType": "activity",
+            "eventType": event_type,
+            "strategyVersion": self.config.execution.strategy_version,
+            "strategyProfile": self.config.execution.strategy_profile,
+            "strategyType": self.config.execution.strategy_type,
+            "marketSlug": self.market.slug,
+            "eventAtMs": int(now.timestamp() * 1000),
+            "timeToExpirySec": int(snapshot.tau_seconds),
+            "action": action,
+            "side": None if side is None else ("Up" if side == OutcomeSide.YES else "Down"),
+            "size": size,
+            "price": price,
+            "reason": reason,
+            "spot": self.roll.last_price,
+            "fairYes": snapshot.fair_yes,
+            "fairNo": snapshot.fair_no,
+            "edgeYes": snapshot.edge_yes,
+            "edgeNo": snapshot.edge_no,
+            "yesBid": self._latest_book.bid if self._latest_book is not None else None,
+            "yesAsk": self._latest_book.ask if self._latest_book is not None else None,
+        }
+        self.activity_archive.write(record)
 
     def _infer_final_direction(self):
         if self.roll.last_price is not None and self.roll.open_price is not None:

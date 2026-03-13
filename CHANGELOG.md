@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.0 - 2026-03-13
+
+- Added `activity.jsonl` execution ledger with per-action and per-fill events
+- Extended window summaries with execution event counts and end-of-window open position state
+- Improved `window_close` records by separating `inferredWinner` from `actualWinner`
+
 ## v1.3.0 - 2026-03-13
 
 - Added `report` CLI command for archived `window_close` analysis

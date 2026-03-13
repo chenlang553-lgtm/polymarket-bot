@@ -4,7 +4,7 @@ import json
 import tempfile
 import os
 
-from polymarket_bot.archive import WindowArchiveWriter
+from polymarket_bot.archive import JsonlWriter, WindowArchiveWriter
 from polymarket_bot.config import StrategyConfig
 from polymarket_bot.gamma import build_market_slug
 from polymarket_bot.market_state import RollingState
@@ -53,6 +53,18 @@ class StrategyTests(unittest.TestCase):
             with open(path) as saved:
                 payload = json.loads(saved.readline())
             self.assertEqual(payload["marketSlug"], "x")
+        finally:
+            os.unlink(path)
+
+    def test_jsonl_writer_appends_records(self):
+        handle, path = tempfile.mkstemp()
+        os.close(handle)
+        try:
+            writer = JsonlWriter(path)
+            writer.write({"recordType": "activity", "action": "open"})
+            with open(path) as saved:
+                payload = json.loads(saved.readline())
+            self.assertEqual(payload["action"], "open")
         finally:
             os.unlink(path)
 

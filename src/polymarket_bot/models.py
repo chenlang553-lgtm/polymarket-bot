@@ -174,6 +174,9 @@ class WindowStats:
         self.last_yes_ask = None
         self.last_yes_bid = None
         self.last_fair_yes = None
+        self.open_position_side = None
+        self.open_position_size = 0.0
+        self.execution_events = 0
 
     def record_action(self, action, qty=0.0, strategy_type=None, execution_status=None):
         self.action_counts[action] = self.action_counts.get(action, 0) + 1
@@ -196,6 +199,13 @@ class WindowStats:
         self.total_fees += fee
         self.total_outlay = self.total_cost + self.total_fees
         self.worst_case_loss = self.total_outlay
+
+    def mark_position(self, side, size):
+        self.open_position_side = None if side is None else ("Up" if side == OutcomeSide.YES else "Down")
+        self.open_position_size = size or 0.0
+
+    def mark_execution_event(self):
+        self.execution_events += 1
 
     def finalize(self, final_direction):
         prices = {"up": 0.99 if final_direction == "Up" else 0.01, "down": 0.99 if final_direction == "Down" else 0.01}
@@ -236,9 +246,14 @@ class WindowStats:
                 "strategyTypeCounts": self.strategy_type_counts,
                 "primaryStrategyType": self.primary_strategy_type,
                 "executionStatusCounts": self.execution_status_counts,
+                "executionEventCount": self.execution_events,
                 "fillCount": self.fill_count,
                 "fillCountBySide": self.fill_count_by_side,
                 "fillQtyBySide": self.fill_qty_by_side,
                 "fillNotionalBySide": self.fill_notional_by_side,
+            },
+            "position": {
+                "openSide": self.open_position_side,
+                "openSize": self.open_position_size,
             },
         }

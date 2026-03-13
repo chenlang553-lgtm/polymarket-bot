@@ -65,6 +65,7 @@ polymarket-bot report --config config.json
 - It prints `STATUS ...` once per second only during the final `active_only_last_seconds` of the current market.
 - It prints `STRATEGY ...` only when an open, close, or flip action is triggered.
 - It appends one `window_close` JSON record per completed 5 minute market to `window_close.jsonl` by default.
+- It appends per-action execution events to `activity.jsonl` by default for later debugging and replay.
 - `report` summarizes archived windows by overall performance, strategy type, and UTC day.
 
 ## Notes
