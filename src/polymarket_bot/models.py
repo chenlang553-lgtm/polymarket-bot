@@ -53,6 +53,18 @@ class BestBidAsk:
             return 0.0
         return (self.bid_size - self.ask_size) / total
 
+    def merged_with(self, fallback):
+        if fallback is None:
+            return self
+        return BestBidAsk(
+            asset_id=self.asset_id,
+            bid=self.bid if self.bid is not None else fallback.bid,
+            ask=self.ask if self.ask is not None else fallback.ask,
+            bid_size=self.bid_size if self.bid_size > 0 else fallback.bid_size,
+            ask_size=self.ask_size if self.ask_size > 0 else fallback.ask_size,
+            timestamp_ms=self.timestamp_ms or fallback.timestamp_ms,
+        )
+
 
 class PriceTick:
     def __init__(self, symbol, price, timestamp_ms):

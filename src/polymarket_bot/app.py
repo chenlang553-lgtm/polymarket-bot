@@ -32,6 +32,7 @@ class TradingApplication:
         self.activity_archive = JsonlWriter(config.logging.activity_path)
         self.state_archive = JsonlWriter(config.logging.market_state_path)
         self._latest_book = None
+        self._last_usable_book = None
         self._latest_trade_imbalance = 0.0
         self._queue = asyncio.Queue()
         self._last_status_second = None
@@ -53,6 +54,7 @@ class TradingApplication:
                 elif kind == "book":
                     if payload.asset_id == self._active_asset_id():
                         self._latest_book = payload
+                        self._maybe_cache_book(payload)
                         self.health.book_updates += 1
                         self.health.last_book_at_ms = payload.timestamp_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
                 elif kind == "price_stream_event":
@@ -158,16 +160,18 @@ class TradingApplication:
 
         snapshot = self.strategy.compute_snapshot(
             state=self.roll,
-            book_yes=self._latest_book,
+            book_yes=self._effective_book(now),
             tau_seconds=tau_seconds,
             trade_imbalance=self._latest_trade_imbalance,
+            previous_fair_yes=None if self.state.last_snapshot is None else self.state.last_snapshot.fair_yes,
         )
         self.state.last_snapshot = snapshot
-        self._window_stats.last_yes_ask = self._latest_book.ask
-        self._window_stats.last_yes_bid = self._latest_book.bid
+        current_book = self._effective_book(now)
+        self._window_stats.last_yes_ask = current_book.ask
+        self._window_stats.last_yes_bid = current_book.bid
         self._window_stats.last_fair_yes = snapshot.fair_yes
         self._log_status(now, snapshot)
-        signal = self.strategy.evaluate(snapshot, self._latest_book, self.state.position)
+        signal = self.strategy.evaluate(snapshot, current_book, self.state.position)
         if signal.action == SignalAction.HOLD:
             return
 
@@ -201,7 +205,7 @@ class TradingApplication:
             self._window_stats.mark_position(None, 0.0)
 
         if signal.action in {SignalAction.OPEN, SignalAction.FLIP}:
-            ask_price = self._latest_book.ask if signal.side == OutcomeSide.YES else max(0.001, 1.0 - (self._latest_book.bid or 0.0))
+            ask_price = current_book.ask if signal.side == OutcomeSide.YES else max(0.001, 1.0 - (current_book.bid or 0.0))
             self._window_stats.record_action(signal.action.value.upper(), signal.size, self.config.execution.strategy_type, "filled")
             self._window_stats.record_fill(signal.side, signal.size, ask_price)
             self._window_stats.mark_execution_event()
@@ -239,6 +243,9 @@ class TradingApplication:
 
         yes_bid = self._latest_book.bid
         yes_ask = self._latest_book.ask
+        effective_book = self._effective_book(now)
+        yes_bid = effective_book.bid
+        yes_ask = effective_book.ask
         no_bid = None if yes_ask is None else max(0.0, 1.0 - yes_ask)
         no_ask = None if yes_bid is None else max(0.0, 1.0 - yes_bid)
         position = "flat"
@@ -337,6 +344,7 @@ class TradingApplication:
         self.state.position = None
         self.roll = RollingState(self.config.strategy)
         self._latest_book = None
+        self._last_usable_book = None
         self._last_status_second = None
         self._last_wait_log_second = None
         if self._latest_spot_price is not None:
@@ -428,6 +436,7 @@ class TradingApplication:
         )
 
     def _write_activity_event(self, now, event_type, action, side, size, price, reason, snapshot):
+        effective_book = self._effective_book(now)
         record = {
             "recordType": "activity",
             "eventType": event_type,
@@ -447,8 +456,8 @@ class TradingApplication:
             "fairNo": snapshot.fair_no,
             "edgeYes": snapshot.edge_yes,
             "edgeNo": snapshot.edge_no,
-            "yesBid": self._latest_book.bid if self._latest_book is not None else None,
-            "yesAsk": self._latest_book.ask if self._latest_book is not None else None,
+            "yesBid": effective_book.bid if effective_book is not None else None,
+            "yesAsk": effective_book.ask if effective_book is not None else None,
         }
         self.activity_archive.write(record)
 
@@ -484,6 +493,28 @@ class TradingApplication:
             _fmt_int(book_lag_ms),
             self.health.last_error or "none",
         )
+
+    def _maybe_cache_book(self, book):
+        if book is None:
+            return
+        if book.bid is None and book.ask is None and book.bid_size <= 0 and book.ask_size <= 0:
+            return
+        if self._last_usable_book is None:
+            self._last_usable_book = book
+            return
+        self._last_usable_book = book.merged_with(self._last_usable_book)
+
+    def _effective_book(self, now):
+        if self._latest_book is None and self._last_usable_book is None:
+            return BestBidAsk(asset_id=self._active_asset_id(), bid=None, ask=None)
+        current = self._latest_book or self._last_usable_book
+        if self._last_usable_book is None:
+            return current
+        max_age_ms = int(self.config.strategy.book_fallback_max_age_seconds * 1000)
+        reference_ms = int(now.timestamp() * 1000)
+        if self._last_usable_book.timestamp_ms and (reference_ms - self._last_usable_book.timestamp_ms) > max_age_ms:
+            return current
+        return current.merged_with(self._last_usable_book)
 
     def _start_background_tasks(self):
         self._tasks["prices"] = asyncio.create_task(self._consume_prices())

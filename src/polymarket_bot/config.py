@@ -58,6 +58,9 @@ class StrategyConfig:
         outlier_sigma_multiplier=1.15,
         drift_weight_m5=0.2,
         drift_weight_m15=0.1,
+        fair_smoothing_start_seconds=20,
+        fair_smoothing_alpha=0.35,
+        book_fallback_max_age_seconds=3,
         size_buckets=None,
     ):
         self.decision_window_start_seconds = decision_window_start_seconds
@@ -72,6 +75,9 @@ class StrategyConfig:
         self.outlier_sigma_multiplier = outlier_sigma_multiplier
         self.drift_weight_m5 = drift_weight_m5
         self.drift_weight_m15 = drift_weight_m15
+        self.fair_smoothing_start_seconds = fair_smoothing_start_seconds
+        self.fair_smoothing_alpha = fair_smoothing_alpha
+        self.book_fallback_max_age_seconds = book_fallback_max_age_seconds
         self.size_buckets = size_buckets or []
 
 
@@ -168,6 +174,9 @@ def load_config(path, profile=None):
             outlier_sigma_multiplier=strategy.get("outlier_sigma_multiplier", 1.15),
             drift_weight_m5=strategy.get("drift_weight_m5", 0.2),
             drift_weight_m15=strategy.get("drift_weight_m15", 0.1),
+            fair_smoothing_start_seconds=strategy.get("fair_smoothing_start_seconds", 20),
+            fair_smoothing_alpha=strategy.get("fair_smoothing_alpha", 0.35),
+            book_fallback_max_age_seconds=strategy.get("book_fallback_max_age_seconds", 3),
             size_buckets=[
                 SizeBucket(min_edge=item["min_edge"], size=item["size"])
                 for item in strategy.get("size_buckets", [])

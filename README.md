@@ -95,5 +95,6 @@ polymarket-bot run --config config.json --profile tight_edge
 
 - The strategy assumes the market is a BTC 5 minute up/down contract where settlement is `BTC(T) > BTC(0)`.
 - Spot input defaults to Binance `aggTrade` for `btcusdt`; RTDS remains available through `price_feed.provider`.
+- The strategy smooths `fair_yes` in the final seconds and uses a short-lived book fallback cache to reduce missing-edge gaps.
 - Order book input comes from the public market WebSocket `wss://ws-subscriptions-clob.polymarket.com/ws/market`.
 - Live execution uses the official Python CLOB client if installed.

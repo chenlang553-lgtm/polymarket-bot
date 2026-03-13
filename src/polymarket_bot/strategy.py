@@ -26,6 +26,7 @@ class StrategyEngine(object):
         book_yes,
         tau_seconds,
         trade_imbalance=0.0,
+        previous_fair_yes=None,
     ):
         sigma_10 = state.sigma_10()
         sigma_30 = state.sigma_30()
@@ -56,6 +57,7 @@ class StrategyEngine(object):
 
         # Optional microstructure layer from the document.
         fair_yes = logistic(logit(fair_yes) + 0.08 * book_yes.obi + 0.05 * trade_imbalance)
+        fair_yes = self._smooth_fair_value(fair_yes, previous_fair_yes, tau_seconds)
         fair_yes = clamp(fair_yes, 0.001, 0.999)
         fair_no = 1.0 - fair_yes
 
@@ -83,6 +85,14 @@ class StrategyEngine(object):
             obi=book_yes.obi,
             trade_imbalance=trade_imbalance,
         )
+
+    def _smooth_fair_value(self, fair_yes, previous_fair_yes, tau_seconds):
+        if previous_fair_yes is None:
+            return fair_yes
+        if tau_seconds > self.config.fair_smoothing_start_seconds:
+            return fair_yes
+        alpha = clamp(self.config.fair_smoothing_alpha, 0.05, 1.0)
+        return alpha * fair_yes + (1.0 - alpha) * previous_fair_yes
 
     def evaluate(self, snapshot, book_yes, position):
         if not (

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.11.0 - 2026-03-13
+
+- Added final-seconds EMA smoothing for `fair_yes` to reduce single-tick probability whipsaws
+- Added short-lived best bid/ask fallback caching to reduce missing-edge gaps during sparse book updates
+- Added tests for fair-value smoothing and order book fallback merging
+
 ## v1.10.0 - 2026-03-13
 
 - Fixed Gamma API access by adding explicit request headers

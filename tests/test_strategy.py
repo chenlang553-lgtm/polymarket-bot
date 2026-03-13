@@ -143,6 +143,25 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(report["by_strategy"]["fair_probability"]["traded"], 1)
         self.assertEqual(report["by_profile"]["main"]["traded"], 1)
 
+    def test_strategy_smooths_fair_value_in_last_seconds(self):
+        config = StrategyConfig(
+            fair_smoothing_start_seconds=20,
+            fair_smoothing_alpha=0.2,
+            size_buckets=default_size_buckets(),
+        )
+        engine = StrategyEngine(config)
+        state = _build_state([100.0 + i * 0.2 for i in range(40)])
+        book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, bid_size=100.0, ask_size=100.0)
+        snapshot = engine.compute_snapshot(state, book, tau_seconds=15, previous_fair_yes=0.5)
+        self.assertTrue(0.5 < snapshot.fair_yes < 1.0)
+
+    def test_best_bid_ask_merges_with_fallback(self):
+        primary = BestBidAsk(asset_id="yes", bid=None, ask=None, bid_size=0.0, ask_size=0.0, timestamp_ms=10)
+        fallback = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, bid_size=10.0, ask_size=12.0, timestamp_ms=9)
+        merged = primary.merged_with(fallback)
+        self.assertEqual(merged.bid, 0.45)
+        self.assertEqual(merged.ask, 0.47)
+
     def test_archive_writer_appends_jsonl_records(self):
         handle, path = tempfile.mkstemp()
         os.close(handle)
