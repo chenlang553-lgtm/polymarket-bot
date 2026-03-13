@@ -1,0 +1,143 @@
+from datetime import datetime
+from pathlib import Path
+import json
+
+from .models import OutcomeSide
+
+
+class SizeBucket:
+    def __init__(self, min_edge, size):
+        self.min_edge = min_edge
+        self.size = size
+
+
+class MarketConfig:
+    def __init__(
+        self,
+        market_slug="",
+        condition_id="",
+        yes_token_id="",
+        no_token_id="",
+        trade_side=OutcomeSide.YES,
+        start_time_utc=None,
+        end_time_utc=None,
+    ):
+        self.market_slug = market_slug
+        self.condition_id = condition_id
+        self.yes_token_id = yes_token_id
+        self.no_token_id = no_token_id
+        self.trade_side = trade_side
+        self.start_time_utc = start_time_utc
+        self.end_time_utc = end_time_utc
+
+
+class PriceFeedConfig:
+    def __init__(self, symbol="btcusdt", source_topic="crypto_prices"):
+        self.symbol = symbol
+        self.source_topic = source_topic
+
+
+class StrategyConfig:
+    def __init__(
+        self,
+        decision_window_start_seconds=45,
+        decision_window_end_seconds=8,
+        min_edge=0.04,
+        max_spread=0.03,
+        min_top_of_book_size=25.0,
+        sigma_slow_lambda=0.97,
+        jump_ratio_threshold=1.8,
+        jump_sigma_multiplier=1.10,
+        outlier_threshold=2.5,
+        outlier_sigma_multiplier=1.15,
+        drift_weight_m5=0.2,
+        drift_weight_m15=0.1,
+        size_buckets=None,
+    ):
+        self.decision_window_start_seconds = decision_window_start_seconds
+        self.decision_window_end_seconds = decision_window_end_seconds
+        self.min_edge = min_edge
+        self.max_spread = max_spread
+        self.min_top_of_book_size = min_top_of_book_size
+        self.sigma_slow_lambda = sigma_slow_lambda
+        self.jump_ratio_threshold = jump_ratio_threshold
+        self.jump_sigma_multiplier = jump_sigma_multiplier
+        self.outlier_threshold = outlier_threshold
+        self.outlier_sigma_multiplier = outlier_sigma_multiplier
+        self.drift_weight_m5 = drift_weight_m5
+        self.drift_weight_m15 = drift_weight_m15
+        self.size_buckets = size_buckets or []
+
+
+class ExecutionConfig:
+    def __init__(self, mode="paper", order_type="fok"):
+        self.mode = mode
+        self.order_type = order_type
+
+
+class WalletConfig:
+    def __init__(self, private_key="", funder="", signature_type=0, chain_id=137):
+        self.private_key = private_key
+        self.funder = funder
+        self.signature_type = signature_type
+        self.chain_id = chain_id
+
+
+class LoggingConfig:
+    def __init__(self, level="INFO"):
+        self.level = level
+
+
+class AppConfig:
+    def __init__(self, market, price_feed, strategy, execution, wallet, logging):
+        self.market = market
+        self.price_feed = price_feed
+        self.strategy = strategy
+        self.execution = execution
+        self.wallet = wallet
+        self.logging = logging
+
+
+def _parse_datetime(value):
+    if not value:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def load_config(path):
+    raw = json.loads(Path(path).read_text())
+    market = raw.get("market", {})
+    strategy = raw.get("strategy", {})
+    return AppConfig(
+        market=MarketConfig(
+            market_slug=market.get("market_slug", ""),
+            condition_id=market.get("condition_id", ""),
+            yes_token_id=market.get("yes_token_id", ""),
+            no_token_id=market.get("no_token_id", ""),
+            trade_side=OutcomeSide(market.get("trade_side", "yes")),
+            start_time_utc=_parse_datetime(market.get("start_time_utc", "")),
+            end_time_utc=_parse_datetime(market.get("end_time_utc", "")),
+        ),
+        price_feed=PriceFeedConfig(**raw.get("price_feed", {})),
+        strategy=StrategyConfig(
+            decision_window_start_seconds=strategy.get("decision_window_start_seconds", 45),
+            decision_window_end_seconds=strategy.get("decision_window_end_seconds", 8),
+            min_edge=strategy.get("min_edge", 0.04),
+            max_spread=strategy.get("max_spread", 0.03),
+            min_top_of_book_size=strategy.get("min_top_of_book_size", 25.0),
+            sigma_slow_lambda=strategy.get("sigma_slow_lambda", 0.97),
+            jump_ratio_threshold=strategy.get("jump_ratio_threshold", 1.8),
+            jump_sigma_multiplier=strategy.get("jump_sigma_multiplier", 1.10),
+            outlier_threshold=strategy.get("outlier_threshold", 2.5),
+            outlier_sigma_multiplier=strategy.get("outlier_sigma_multiplier", 1.15),
+            drift_weight_m5=strategy.get("drift_weight_m5", 0.2),
+            drift_weight_m15=strategy.get("drift_weight_m15", 0.1),
+            size_buckets=[
+                SizeBucket(min_edge=item["min_edge"], size=item["size"])
+                for item in strategy.get("size_buckets", [])
+            ],
+        ),
+        execution=ExecutionConfig(**raw.get("execution", {})),
+        wallet=WalletConfig(**raw.get("wallet", {})),
+        logging=LoggingConfig(**raw.get("logging", {})),
+    )

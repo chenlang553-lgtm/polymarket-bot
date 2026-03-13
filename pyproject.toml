@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polymarket-bot"
+version = "0.1.0"
+description = "Realtime Polymarket trading bot for BTC 5m up/down markets."
+requires-python = ">=3.6"
+dependencies = [
+  "websockets>=9,<10",
+]
+
+[project.optional-dependencies]
+trading = [
+  "py-clob-client>=0.29.0",
+]
+
+[project.scripts]
+polymarket-bot = "polymarket_bot.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
