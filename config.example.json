@@ -36,7 +36,7 @@
   "execution": {
     "mode": "paper",
     "order_type": "fok",
-    "strategy_version": 2,
+    "strategy_version": 3,
     "strategy_profile": "main",
     "strategy_type": "fair_probability"
   },

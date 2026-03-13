@@ -9,6 +9,7 @@ from polymarket_bot.config import StrategyConfig
 from polymarket_bot.gamma import build_market_slug
 from polymarket_bot.market_state import RollingState
 from polymarket_bot.models import BestBidAsk, OutcomeSide, Position, SignalAction
+from polymarket_bot.report import build_report
 from polymarket_bot.strategy import StrategyEngine, default_size_buckets
 
 
@@ -21,6 +22,28 @@ def _build_state(prices):
 
 
 class StrategyTests(unittest.TestCase):
+    def test_build_report_summarizes_windows(self):
+        report = build_report(
+            [
+                {
+                    "strategyType": "fair_probability",
+                    "realizedPnl": 1.5,
+                    "closedAtMs": 1773407099026,
+                    "activity": {"fillCount": 2},
+                },
+                {
+                    "strategyType": None,
+                    "realizedPnl": -0.5,
+                    "closedAtMs": 1773407399005,
+                    "activity": {"fillCount": 0},
+                },
+            ]
+        )
+        self.assertEqual(report["summary"]["total_windows"], 2)
+        self.assertEqual(report["summary"]["traded_windows"], 1)
+        self.assertAlmostEqual(report["summary"]["total_realized_pnl"], 1.0)
+        self.assertEqual(report["by_strategy"]["fair_probability"]["traded"], 1)
+
     def test_archive_writer_appends_jsonl_records(self):
         handle, path = tempfile.mkstemp()
         os.close(handle)

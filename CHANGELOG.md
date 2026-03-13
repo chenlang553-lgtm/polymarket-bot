@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.3.0 - 2026-03-13
+
+- Added `report` CLI command for archived `window_close` analysis
+- Added offline summary metrics: total windows, traded windows, win rate, realized PnL, and max drawdown
+- Added grouping by `strategyType` and UTC day for quick iteration comparisons
+
 ## v1.2.0 - 2026-03-13
 
 - Automatic `window_close` JSONL archival at the end of each 5 minute market

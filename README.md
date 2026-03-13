@@ -52,6 +52,12 @@ Run in paper mode:
 polymarket-bot run --config config.json
 ```
 
+Generate a rollup report from archived `window_close` records:
+
+```bash
+polymarket-bot report --config config.json
+```
+
 ## Runtime behavior
 
 - The bot listens to BTC spot continuously to build window state.
@@ -59,6 +65,7 @@ polymarket-bot run --config config.json
 - It prints `STATUS ...` once per second only during the final `active_only_last_seconds` of the current market.
 - It prints `STRATEGY ...` only when an open, close, or flip action is triggered.
 - It appends one `window_close` JSON record per completed 5 minute market to `window_close.jsonl` by default.
+- `report` summarizes archived windows by overall performance, strategy type, and UTC day.
 
 ## Notes
 

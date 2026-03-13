@@ -4,13 +4,15 @@ import logging
 from pprint import pprint
 
 from .app import TradingApplication
+from .archive import load_window_records
 from .config import load_config
 from .gamma import resolve_market
+from .report import run_report
 
 
 def main():
     parser = argparse.ArgumentParser(prog="polymarket-bot")
-    parser.add_argument("command", choices=["inspect", "run"])
+    parser.add_argument("command", choices=["inspect", "run", "report"])
     parser.add_argument("--config", default="config.json")
     args = parser.parse_args()
 
@@ -23,6 +25,10 @@ def main():
     if args.command == "inspect":
         market = resolve_market(config.market)
         pprint(market)
+        return
+
+    if args.command == "report":
+        print(run_report(config.logging.window_close_path))
         return
 
     app = TradingApplication(config)
