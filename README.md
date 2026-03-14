@@ -52,6 +52,18 @@ Run in paper mode:
 polymarket-bot run --config config.json
 ```
 
+Start a detached iteration run with a versioned log/data directory:
+
+```bash
+./scripts/run_iteration.sh v1.22.0
+```
+
+With a custom profile or config path:
+
+```bash
+./scripts/run_iteration.sh v1.22.0 tight_edge /root/polymarket_bot/config.json
+```
+
 Generate a rollup report from archived `window_close` records:
 
 ```bash

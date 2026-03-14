@@ -97,6 +97,11 @@
 - Updated strategy edge calculations to use validated midpoint prices instead of synthetic complement quotes
 - Filtered out placeholder `0.01/0.99` books from status, activity, and replay records
 
+## v1.22.1 - 2026-03-14
+
+- Added `scripts/run_iteration.sh` to start a detached iteration run with versioned `logs/<iteration>` and `data/<iteration>` paths
+- Documented the helper script in the README so new experiment runs do not require hand-written `nohup` commands
+
 ## v1.22.0 - 2026-03-14
 
 - Tightened the default trading profile with a narrower decision window, higher edge threshold, tighter spread limit, and more conservative size buckets
