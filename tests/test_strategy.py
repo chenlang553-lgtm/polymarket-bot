@@ -9,7 +9,7 @@ from polymarket_bot.archive import JsonlWriter, WindowArchiveWriter
 from polymarket_bot.config import StrategyConfig, load_config
 from polymarket_bot.gamma import build_market_slug
 from polymarket_bot.market_state import RollingState
-from polymarket_bot.models import BestBidAsk, OutcomeSide, Position, SignalAction
+from polymarket_bot.models import BestBidAsk, OutcomeSide, Position, RuntimeState, SignalAction, StrategySnapshot, TradeSignal, WindowStats
 from polymarket_bot.replay import format_replay_line, run_replay
 from polymarket_bot.report import build_report
 from polymarket_bot.strategy import StrategyEngine, default_size_buckets
@@ -391,6 +391,154 @@ class StrategyTests(unittest.TestCase):
         signal = engine.evaluate(snapshot, yes_book, no_book, position=position)
         self.assertEqual(signal.action, SignalAction.CLOSE)
         self.assertEqual(signal.reason, "edge_decayed")
+
+    def test_live_open_sets_error_report_on_submission_failure(self):
+        from polymarket_bot.execution import LiveExecutor
+
+        class FakeClient:
+            def create_market_order(self, order):
+                return {"signed": order}
+
+            def post_order(self, signed, order_type):
+                raise RuntimeError("boom")
+
+        class FakeOrder:
+            def __init__(self, token_id, amount, side, order_type):
+                self.token_id = token_id
+                self.amount = amount
+                self.side = side
+                self.order_type = order_type
+
+        class FakeOrderType:
+            FOK = "fok"
+
+        executor = LiveExecutor.__new__(LiveExecutor)
+        executor.execution = type("Exec", (), {"order_type": "fok"})()
+        executor._market_order_args_cls = FakeOrder
+        executor._order_type_cls = FakeOrderType
+        executor._buy_constant = "BUY"
+        executor._client = FakeClient()
+
+        market = type("Market", (), {"yes_token_id": "Y", "no_token_id": "N"})()
+        signal = type("Signal", (), {
+            "side": OutcomeSide.YES,
+            "size": 1.0,
+            "reason": "test",
+            "snapshot": type("Snap", (), {"edge_yes": 0.1, "edge_no": -0.1})(),
+        })()
+
+        with self.assertRaises(RuntimeError):
+            executor.open_position(market, signal, 0.5)
+
+        self.assertIsNotNone(executor.last_report)
+        self.assertFalse(executor.last_report["success"])
+        self.assertEqual(executor.last_report["status"], "rejected")
+
+    def test_flip_is_deferred_after_close_in_same_tick(self):
+        app = TradingApplication.__new__(TradingApplication)
+
+        now = datetime.now(timezone.utc)
+        app.market = type("Market", (), {
+            "start_time": now - timedelta(seconds=120),
+            "end_time": now + timedelta(seconds=20),
+            "yes_token_id": "Y",
+            "no_token_id": "N",
+            "slug": "m",
+            "condition_id": "c",
+        })()
+        app.config = type("Cfg", (), {
+            "logging": type("Log", (), {"active_only_last_seconds": 60})(),
+            "strategy": type("Strat", (), {"book_fallback_max_age_seconds": 3})(),
+            "execution": type("Exec", (), {"strategy_type": "fair_probability"})(),
+        })()
+        app._latest_trade_imbalance = 0.0
+        app._latest_books = {
+            "Y": BestBidAsk(asset_id="Y", bid=0.45, ask=0.47, bid_size=100, ask_size=100, timestamp_ms=int(now.timestamp()*1000)),
+            "N": BestBidAsk(asset_id="N", bid=0.53, ask=0.55, bid_size=100, ask_size=100, timestamp_ms=int(now.timestamp()*1000)),
+        }
+        app._last_usable_books = {}
+        app._order_in_flight = False
+        app._inflight_since_ms = 0
+        app._inflight_context = ""
+        app._window_stats = WindowStats()
+        app._write_activity_event = lambda **kwargs: None
+        app._log_status = lambda now, snapshot: None
+
+        snapshot = StrategySnapshot(
+            fair_yes=0.6,
+            fair_no=0.4,
+            yes_price=0.47,
+            no_price=0.55,
+            edge_yes=0.13,
+            edge_no=-0.15,
+            sigma_10=0.01,
+            sigma_30=0.01,
+            sigma_slow=0.01,
+            sigma_eff=0.01,
+            momentum_5=0.0,
+            momentum_15=0.0,
+            drift=0.0,
+            x_t=0.0,
+            tau_seconds=20,
+            jump_adjusted=False,
+            outlier_adjusted=False,
+        )
+
+        class FakeStrategy:
+            def compute_snapshot(self, **kwargs):
+                return snapshot
+
+            def evaluate(self, snapshot, yes_book, no_book, position):
+                return TradeSignal(SignalAction.FLIP, side=OutcomeSide.NO, size=1.0, reason="flip", snapshot=snapshot)
+
+        class FakeExecutor:
+            def __init__(self):
+                self.last_report = None
+                self.open_calls = 0
+                self.close_calls = 0
+
+            def close_position(self, market, position):
+                self.close_calls += 1
+                self.last_report = {
+                    "success": True,
+                    "status": "filled",
+                    "requested_size": position.size,
+                    "filled_size": position.size,
+                    "avg_price": position.entry_price,
+                    "error": "",
+                    "raw": None,
+                }
+
+            def open_position(self, market, signal, entry_price):
+                self.open_calls += 1
+                self.last_report = {
+                    "success": True,
+                    "status": "filled",
+                    "requested_size": signal.size,
+                    "filled_size": signal.size,
+                    "avg_price": entry_price,
+                    "error": "",
+                    "raw": None,
+                }
+                return Position(side=signal.side, size=signal.size, entry_price=entry_price, edge_at_entry=0.1, opened_at=now)
+
+            def reconcile_position(self, market, local_position):
+                return local_position, True, "ok"
+
+        app.strategy = FakeStrategy()
+        app.executor = FakeExecutor()
+        app.roll = type("Roll", (), {"open_price": 100.0, "last_price": 101.0})()
+        app.state = RuntimeState(
+            market=app.market,
+            position=Position(side=OutcomeSide.YES, size=1.0, entry_price=0.45, edge_at_entry=0.2, opened_at=now),
+            last_snapshot=None,
+        )
+
+        app._tick()
+
+        self.assertEqual(app.executor.close_calls, 1)
+        self.assertEqual(app.executor.open_calls, 0)
+        self.assertIsNone(app.state.position)
 
 
 if __name__ == "__main__":

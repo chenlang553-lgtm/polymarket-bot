@@ -41,6 +41,9 @@ class TradingApplication:
         self._window_stats = WindowStats()
         self._running = True
         self._tasks = {}
+        self._order_in_flight = False
+        self._inflight_since_ms = 0
+        self._inflight_context = ""
 
     async def run(self):
         self._startup_check()
@@ -141,6 +144,44 @@ class TradingApplication:
             await asyncio.sleep(interval)
             self._log_health()
 
+    def _execution_report(self):
+        report = getattr(self.executor, "last_report", None)
+        if isinstance(report, dict):
+            return report
+        return {
+            "success": True,
+            "status": "filled",
+            "requested_size": 0.0,
+            "filled_size": 0.0,
+            "avg_price": None,
+            "error": "",
+            "raw": None,
+        }
+
+    def _mark_inflight(self, now, context):
+        self._order_in_flight = True
+        self._inflight_since_ms = int(now.timestamp() * 1000)
+        self._inflight_context = context
+
+    def _clear_inflight(self):
+        self._order_in_flight = False
+        self._inflight_since_ms = 0
+        self._inflight_context = ""
+
+    def _reconcile_inflight(self):
+        reconcile = getattr(self.executor, "reconcile_position", None)
+        if not callable(reconcile):
+            return False
+        position, resolved, reason = reconcile(self.market, self.state.position)
+        if resolved:
+            self.state.position = position
+            self._window_stats.mark_position(None if position is None else position.side, 0.0 if position is None else position.size)
+            self._clear_inflight()
+            LOGGER.info("EXECUTION reconcile_resolved reason=%s pos=%s", reason, "flat" if position is None else position.side.value)
+            return True
+        LOGGER.warning("EXECUTION reconcile_pending reason=%s context=%s", reason, self._inflight_context)
+        return False
+
     def _tick(self):
         if self.market.start_time is None or self.market.end_time is None:
             raise RuntimeError("market end_time is required for live strategy timing")
@@ -157,6 +198,10 @@ class TradingApplication:
             self._log_waiting(now)
             return
 
+        if self._order_in_flight and not self._reconcile_inflight():
+            LOGGER.warning("EXECUTION blocked_inflight context=%s", self._inflight_context)
+            return
+
         yes_book = self._effective_book(self.market.yes_token_id, now)
         no_book = self._effective_book(self.market.no_token_id, now)
         snapshot = self.strategy.compute_snapshot(
@@ -169,7 +214,7 @@ class TradingApplication:
         )
         self.state.last_snapshot = snapshot
         self._window_stats.last_yes_ask = snapshot.yes_price
-        self._window_stats.last_yes_bid = snapshot.no_price
+        self._window_stats.last_yes_bid = yes_book.bid
         self._window_stats.last_fair_yes = snapshot.fair_yes
         self._log_status(now, snapshot)
         signal = self.strategy.evaluate(snapshot, yes_book, no_book, self.state.position)
@@ -177,33 +222,50 @@ class TradingApplication:
             return
 
         if signal.action in {SignalAction.CLOSE, SignalAction.FLIP} and self.state.position is not None:
-            self._window_stats.record_action(signal.action.value.upper(), self.state.position.size, self.config.execution.strategy_type, "filled")
-            self._window_stats.mark_execution_event()
-            self._write_activity_event(
-                now=now,
-                event_type="execution",
-                action=signal.action.value,
-                side=self.state.position.side,
-                size=self.state.position.size,
-                price=self.state.position.entry_price,
-                reason=signal.reason,
-                snapshot=snapshot,
-            )
-            LOGGER.info(
-                "STRATEGY action=%s side=%s size=%.4f reason=%s tau=%.1f fair_yes=%.3f fair_no=%.3f edge_yes=%s edge_no=%s",
-                signal.action.value,
-                self.state.position.side.value,
-                self.state.position.size,
-                signal.reason,
-                tau_seconds,
-                snapshot.fair_yes,
-                snapshot.fair_no,
-                _fmt(snapshot.edge_yes),
-                _fmt(snapshot.edge_no),
-            )
-            self.executor.close_position(self.market, self.state.position)
-            self.state.position = None
-            self._window_stats.mark_position(None, 0.0)
+            self._window_stats.record_action(signal.action.value.upper(), self.state.position.size, self.config.execution.strategy_type, "attempt")
+            self._mark_inflight(now, "close_%s" % signal.action.value)
+            try:
+                self.executor.close_position(self.market, self.state.position)
+            except Exception as exc:
+                LOGGER.error("EXECUTION close_failed action=%s side=%s size=%.4f error=%s", signal.action.value, self.state.position.side.value, self.state.position.size, exc)
+                return
+
+            report = self._execution_report()
+            requested = max(0.0, float(report.get("requested_size", self.state.position.size)))
+            filled = max(0.0, float(report.get("filled_size", 0.0)))
+            if not report.get("success", False):
+                LOGGER.error("EXECUTION close_unsuccessful status=%s error=%s", report.get("status"), report.get("error"))
+                return
+
+            if filled >= requested - 1e-9:
+                self._window_stats.record_action(signal.action.value.upper(), requested, self.config.execution.strategy_type, "filled")
+                self._window_stats.mark_execution_event()
+                self._write_activity_event(
+                    now=now,
+                    event_type="execution",
+                    action=signal.action.value,
+                    side=self.state.position.side,
+                    size=requested,
+                    price=self.state.position.entry_price,
+                    reason=signal.reason,
+                    snapshot=snapshot,
+                )
+                self.state.position = None
+                self._window_stats.mark_position(None, 0.0)
+                self._clear_inflight()
+            elif filled > 0:
+                self.state.position.size = max(0.0, self.state.position.size - filled)
+                self._window_stats.mark_position(self.state.position.side, self.state.position.size)
+                LOGGER.warning("EXECUTION partial_close requested=%.4f filled=%.4f remaining=%.4f", requested, filled, self.state.position.size)
+                return
+            else:
+                LOGGER.warning("EXECUTION close_submitted_unfilled status=%s", report.get("status"))
+                return
+
+            # Safer flip handling: do not reopen in same tick after close.
+            if signal.action == SignalAction.FLIP:
+                LOGGER.info("EXECUTION flip_deferred next_tick=true")
+                return
 
         if signal.action in {SignalAction.OPEN, SignalAction.FLIP}:
             selected_book = yes_book if signal.side == OutcomeSide.YES else no_book
@@ -222,24 +284,48 @@ class TradingApplication:
                     _fmt(snapshot.edge_no),
                 )
                 return
-            self._window_stats.record_action(signal.action.value.upper(), signal.size, self.config.execution.strategy_type, "filled")
-            self._window_stats.record_fill(signal.side, signal.size, entry_price)
+
+            self._window_stats.record_action(signal.action.value.upper(), signal.size, self.config.execution.strategy_type, "attempt")
+            self._mark_inflight(now, "open_%s" % signal.action.value)
+            try:
+                candidate_position = self.executor.open_position(self.market, signal, entry_price)
+            except Exception as exc:
+                LOGGER.error("EXECUTION open_failed action=%s side=%s size=%.4f error=%s", signal.action.value, signal.side.value, signal.size, exc)
+                return
+
+            report = self._execution_report()
+            requested = max(0.0, float(report.get("requested_size", signal.size)))
+            filled = max(0.0, float(report.get("filled_size", 0.0)))
+            if not report.get("success", False) or filled <= 0.0:
+                LOGGER.warning("EXECUTION open_unconfirmed status=%s error=%s", report.get("status"), report.get("error"))
+                return
+
+            if filled < requested:
+                candidate_position.size = filled
+                LOGGER.warning("EXECUTION partial_open requested=%.4f filled=%.4f", requested, filled)
+            self.state.position = candidate_position
+            self._window_stats.record_action(signal.action.value.upper(), filled, self.config.execution.strategy_type, "filled")
+            self._window_stats.record_fill(signal.side, filled, entry_price)
             self._window_stats.mark_execution_event()
             self._write_activity_event(
                 now=now,
                 event_type="fill",
                 action=signal.action.value,
                 side=signal.side,
-                size=signal.size,
+                size=filled,
                 price=entry_price,
                 reason=signal.reason,
                 snapshot=snapshot,
             )
+            self._window_stats.mark_position(signal.side, candidate_position.size)
+            if filled >= requested - 1e-9:
+                self._clear_inflight()
             LOGGER.info(
-                "STRATEGY action=%s side=%s size=%.4f reason=%s tau=%.1f price=%.4f fair_yes=%.3f fair_no=%.3f edge_yes=%s edge_no=%s",
+                "STRATEGY action=%s side=%s requested=%.4f filled=%.4f reason=%s tau=%.1f price=%.4f fair_yes=%.3f fair_no=%.3f edge_yes=%s edge_no=%s",
                 signal.action.value,
                 signal.side.value,
-                signal.size,
+                requested,
+                filled,
                 signal.reason,
                 tau_seconds,
                 entry_price,
@@ -248,8 +334,6 @@ class TradingApplication:
                 _fmt(snapshot.edge_yes),
                 _fmt(snapshot.edge_no),
             )
-            self.state.position = self.executor.open_position(self.market, signal, entry_price)
-            self._window_stats.mark_position(signal.side, signal.size)
 
     def _log_status(self, now, snapshot):
         current_second = int(now.timestamp())
