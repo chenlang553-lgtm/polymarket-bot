@@ -58,6 +58,8 @@ Start a detached iteration run with a versioned log/data directory:
 ./scripts/run_iteration.sh v1.22.0
 ```
 
+The helper stops any existing bot process using the same `config + profile` before starting the new iteration.
+
 With a custom profile or config path:
 
 ```bash

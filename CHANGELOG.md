@@ -97,6 +97,11 @@
 - Updated strategy edge calculations to use validated midpoint prices instead of synthetic complement quotes
 - Filtered out placeholder `0.01/0.99` books from status, activity, and replay records
 
+## v1.22.2 - 2026-03-14
+
+- Updated `scripts/run_iteration.sh` to stop any existing bot process using the same `config + profile` before starting a new iteration
+- Documented the restart behavior in the README so iteration switches do not leave multiple bot processes running
+
 ## v1.22.1 - 2026-03-14
 
 - Added `scripts/run_iteration.sh` to start a detached iteration run with versioned `logs/<iteration>` and `data/<iteration>` paths

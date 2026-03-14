@@ -15,6 +15,7 @@ PYTHONPATH_DIR="${PROJECT_ROOT}/src"
 LOGS_DIR="${PROJECT_ROOT}/logs/${ITERATION}"
 DATA_DIR="${PROJECT_ROOT}/data/${ITERATION}"
 LOG_PATH="${LOGS_DIR}/service.log"
+RUN_PATTERN="polymarket_bot run --config ${CONFIG_PATH} --profile ${PROFILE}"
 
 mkdir -p "${LOGS_DIR}" "${DATA_DIR}"
 
@@ -23,10 +24,17 @@ if [[ ! -f "${CONFIG_PATH}" ]]; then
   exit 1
 fi
 
-if pgrep -af "polymarket_bot run --config ${CONFIG_PATH} --profile ${PROFILE} --iteration ${ITERATION}" >/dev/null 2>&1; then
-  echo "Already running iteration=${ITERATION} profile=${PROFILE}" >&2
-  pgrep -af "polymarket_bot run --config ${CONFIG_PATH} --profile ${PROFILE} --iteration ${ITERATION}"
-  exit 0
+EXISTING_PIDS="$(pgrep -f "${RUN_PATTERN}" || true)"
+
+if [[ -n "${EXISTING_PIDS}" ]]; then
+  echo "stopping existing process(es) for profile=${PROFILE}"
+  for pid in ${EXISTING_PIDS}; do
+    if [[ "${pid}" != "$$" ]]; then
+      kill "${pid}" >/dev/null 2>&1 || true
+      echo "stopped pid=${pid}"
+    fi
+  done
+  sleep 1
 fi
 
 cd "${PROJECT_ROOT}"
