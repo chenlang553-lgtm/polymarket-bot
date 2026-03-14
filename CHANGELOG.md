@@ -61,6 +61,11 @@
 - Added CLI `--profile` selection for `inspect`, `run`, and `report`
 - Extended reports with `strategyProfile` summaries for version-to-version comparison
 
+## v1.21.0 - 2026-03-14
+
+- Fixed `LiveExecutor.open_position()` so submission failures now always populate `last_report`
+- Removed duplicate live open submission path that could raise before error reporting was recorded
+
 ## v1.20.0 - 2026-03-14
 
 - Rebuilt Polymarket outcome pricing to match the provided JS market-data logic
