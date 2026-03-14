@@ -214,7 +214,7 @@ class TradingApplication:
         )
         self.state.last_snapshot = snapshot
         self._window_stats.last_yes_ask = snapshot.yes_price
-        self._window_stats.last_yes_bid = snapshot.no_price
+        self._window_stats.last_yes_bid = yes_book.bid
         self._window_stats.last_fair_yes = snapshot.fair_yes
         self._log_status(now, snapshot)
         signal = self.strategy.evaluate(snapshot, yes_book, no_book, self.state.position)
