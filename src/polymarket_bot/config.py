@@ -47,10 +47,10 @@ class PriceFeedConfig:
 class StrategyConfig:
     def __init__(
         self,
-        decision_window_start_seconds=45,
-        decision_window_end_seconds=8,
-        min_edge=0.04,
-        max_spread=0.03,
+        decision_window_start_seconds=35,
+        decision_window_end_seconds=10,
+        min_edge=0.06,
+        max_spread=0.025,
         min_top_of_book_size=25.0,
         sigma_slow_lambda=0.97,
         jump_ratio_threshold=1.8,
@@ -59,8 +59,14 @@ class StrategyConfig:
         outlier_sigma_multiplier=1.15,
         drift_weight_m5=0.2,
         drift_weight_m15=0.1,
-        fair_smoothing_start_seconds=20,
-        fair_smoothing_alpha=0.35,
+        fair_smoothing_start_seconds=25,
+        fair_smoothing_alpha=0.20,
+        fair_value_cap=0.975,
+        require_both_prices=True,
+        edge_decay_close_threshold=0.0,
+        max_entries_per_window=2,
+        max_flips_per_window=1,
+        allow_same_side_reentry=False,
         book_fallback_max_age_seconds=3,
         size_buckets=None,
     ):
@@ -78,6 +84,12 @@ class StrategyConfig:
         self.drift_weight_m15 = drift_weight_m15
         self.fair_smoothing_start_seconds = fair_smoothing_start_seconds
         self.fair_smoothing_alpha = fair_smoothing_alpha
+        self.fair_value_cap = fair_value_cap
+        self.require_both_prices = require_both_prices
+        self.edge_decay_close_threshold = edge_decay_close_threshold
+        self.max_entries_per_window = max_entries_per_window
+        self.max_flips_per_window = max_flips_per_window
+        self.allow_same_side_reentry = allow_same_side_reentry
         self.book_fallback_max_age_seconds = book_fallback_max_age_seconds
         self.size_buckets = size_buckets or []
 
@@ -180,10 +192,10 @@ def load_config(path, profile=None):
         ),
         price_feed=PriceFeedConfig(**raw.get("price_feed", {})),
         strategy=StrategyConfig(
-            decision_window_start_seconds=strategy.get("decision_window_start_seconds", 45),
-            decision_window_end_seconds=strategy.get("decision_window_end_seconds", 8),
-            min_edge=strategy.get("min_edge", 0.04),
-            max_spread=strategy.get("max_spread", 0.03),
+            decision_window_start_seconds=strategy.get("decision_window_start_seconds", 35),
+            decision_window_end_seconds=strategy.get("decision_window_end_seconds", 10),
+            min_edge=strategy.get("min_edge", 0.06),
+            max_spread=strategy.get("max_spread", 0.025),
             min_top_of_book_size=strategy.get("min_top_of_book_size", 25.0),
             sigma_slow_lambda=strategy.get("sigma_slow_lambda", 0.97),
             jump_ratio_threshold=strategy.get("jump_ratio_threshold", 1.8),
@@ -192,8 +204,14 @@ def load_config(path, profile=None):
             outlier_sigma_multiplier=strategy.get("outlier_sigma_multiplier", 1.15),
             drift_weight_m5=strategy.get("drift_weight_m5", 0.2),
             drift_weight_m15=strategy.get("drift_weight_m15", 0.1),
-            fair_smoothing_start_seconds=strategy.get("fair_smoothing_start_seconds", 20),
-            fair_smoothing_alpha=strategy.get("fair_smoothing_alpha", 0.35),
+            fair_smoothing_start_seconds=strategy.get("fair_smoothing_start_seconds", 25),
+            fair_smoothing_alpha=strategy.get("fair_smoothing_alpha", 0.20),
+            fair_value_cap=strategy.get("fair_value_cap", 0.975),
+            require_both_prices=strategy.get("require_both_prices", True),
+            edge_decay_close_threshold=strategy.get("edge_decay_close_threshold", 0.0),
+            max_entries_per_window=strategy.get("max_entries_per_window", 2),
+            max_flips_per_window=strategy.get("max_flips_per_window", 1),
+            allow_same_side_reentry=strategy.get("allow_same_side_reentry", False),
             book_fallback_max_age_seconds=strategy.get("book_fallback_max_age_seconds", 3),
             size_buckets=[
                 SizeBucket(min_edge=item["min_edge"], size=item["size"])

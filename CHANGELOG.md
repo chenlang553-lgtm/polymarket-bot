@@ -97,6 +97,13 @@
 - Updated strategy edge calculations to use validated midpoint prices instead of synthetic complement quotes
 - Filtered out placeholder `0.01/0.99` books from status, activity, and replay records
 
+## v1.22.0 - 2026-03-14
+
+- Tightened the default trading profile with a narrower decision window, higher edge threshold, tighter spread limit, and more conservative size buckets
+- Capped fair probabilities away from `0.001/0.999` and switched signal prices back to book-derived market prices instead of executable asks
+- Added single-window risk controls: require both outcome prices, block same-side reentry, cap entries per window, and cap flips per window
+- Relaxed edge-decay exits so the bot no longer closes and immediately reopens while the held side still has positive edge
+
 ## v1.4.0 - 2026-03-13
 
 - Added `activity.jsonl` execution ledger with per-action and per-fill events

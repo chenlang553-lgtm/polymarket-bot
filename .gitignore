@@ -11,6 +11,7 @@ build/
 *.egg-info/
 config.json
 *.log
+nohup.out
 *.jsonl
 logs/
 data/

@@ -16,10 +16,10 @@
     "provider": "binance"
   },
   "strategy": {
-    "decision_window_start_seconds": 45,
-    "decision_window_end_seconds": 8,
-    "min_edge": 0.04,
-    "max_spread": 0.03,
+    "decision_window_start_seconds": 35,
+    "decision_window_end_seconds": 10,
+    "min_edge": 0.06,
+    "max_spread": 0.025,
     "min_top_of_book_size": 25.0,
     "sigma_slow_lambda": 0.97,
     "jump_ratio_threshold": 1.8,
@@ -28,13 +28,19 @@
     "outlier_sigma_multiplier": 1.15,
     "drift_weight_m5": 0.2,
     "drift_weight_m15": 0.1,
-    "fair_smoothing_start_seconds": 20,
-    "fair_smoothing_alpha": 0.35,
+    "fair_smoothing_start_seconds": 25,
+    "fair_smoothing_alpha": 0.2,
+    "fair_value_cap": 0.975,
+    "require_both_prices": true,
+    "edge_decay_close_threshold": 0.0,
+    "max_entries_per_window": 2,
+    "max_flips_per_window": 1,
+    "allow_same_side_reentry": false,
     "book_fallback_max_age_seconds": 3,
     "size_buckets": [
-      {"min_edge": 0.04, "size": 0.5},
-      {"min_edge": 0.06, "size": 1.0},
-      {"min_edge": 0.10, "size": 1.5}
+      {"min_edge": 0.06, "size": 0.5},
+      {"min_edge": 0.09, "size": 1.0},
+      {"min_edge": 0.14, "size": 1.5}
     ]
   },
   "execution": {
@@ -65,7 +71,7 @@
     "main": {},
     "tight_edge": {
       "strategy": {
-        "min_edge": 0.06,
+        "min_edge": 0.08,
         "max_spread": 0.02
       }
     },

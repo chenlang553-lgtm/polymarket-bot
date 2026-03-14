@@ -165,7 +165,7 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(merged.bid, 0.45)
         self.assertEqual(merged.ask, 0.47)
 
-    def test_compute_snapshot_uses_executable_ask_prices(self):
+    def test_compute_snapshot_uses_market_prices_with_fair_cap(self):
         config = StrategyConfig(size_buckets=default_size_buckets())
         engine = StrategyEngine(config)
         state = _build_state([100.0 + i * 0.1 for i in range(80)])
@@ -174,10 +174,72 @@ class StrategyTests(unittest.TestCase):
 
         snapshot = engine.compute_snapshot(state, yes_book, no_book, tau_seconds=20)
 
-        self.assertEqual(snapshot.yes_price, 0.47)
-        self.assertEqual(snapshot.no_price, 0.55)
-        self.assertAlmostEqual(snapshot.edge_yes, snapshot.fair_yes - yes_book.ask)
-        self.assertAlmostEqual(snapshot.edge_no, snapshot.fair_no - no_book.ask)
+        self.assertAlmostEqual(snapshot.yes_price, 0.46)
+        self.assertAlmostEqual(snapshot.no_price, 0.54)
+        self.assertAlmostEqual(snapshot.edge_yes, snapshot.fair_yes - 0.46)
+        self.assertAlmostEqual(snapshot.edge_no, snapshot.fair_no - 0.54)
+        self.assertLessEqual(snapshot.fair_yes, config.fair_value_cap)
+
+    def test_evaluate_requires_both_prices_when_enabled(self):
+        config = StrategyConfig(require_both_prices=True, size_buckets=default_size_buckets())
+        engine = StrategyEngine(config)
+        snapshot = StrategySnapshot(
+            fair_yes=0.8,
+            fair_no=0.2,
+            yes_price=0.4,
+            no_price=None,
+            edge_yes=0.4,
+            edge_no=None,
+            sigma_10=0.0,
+            sigma_30=0.0,
+            sigma_slow=0.0,
+            sigma_eff=0.0,
+            momentum_5=0.0,
+            momentum_15=0.0,
+            drift=0.0,
+            x_t=0.0,
+            tau_seconds=20,
+            jump_adjusted=False,
+            outlier_adjusted=False,
+        )
+        yes_book = BestBidAsk(asset_id="yes", bid=0.39, ask=0.41, bid_size=100.0, ask_size=100.0)
+        no_book = BestBidAsk(asset_id="no", bid=None, ask=None, bid_size=0.0, ask_size=0.0)
+
+        signal = engine.evaluate(snapshot, yes_book, no_book, position=None)
+
+        self.assertEqual(signal.action, SignalAction.HOLD)
+        self.assertEqual(signal.reason, "incomplete_market_prices")
+
+    def test_positive_edge_decay_does_not_force_close(self):
+        config = StrategyConfig(edge_decay_close_threshold=0.0, size_buckets=default_size_buckets())
+        engine = StrategyEngine(config)
+        snapshot = StrategySnapshot(
+            fair_yes=0.7,
+            fair_no=0.3,
+            yes_price=0.62,
+            no_price=0.38,
+            edge_yes=0.08,
+            edge_no=-0.08,
+            sigma_10=0.0,
+            sigma_30=0.0,
+            sigma_slow=0.0,
+            sigma_eff=0.0,
+            momentum_5=0.0,
+            momentum_15=0.0,
+            drift=0.0,
+            x_t=0.0,
+            tau_seconds=20,
+            jump_adjusted=False,
+            outlier_adjusted=False,
+        )
+        yes_book = BestBidAsk(asset_id="yes", bid=0.61, ask=0.63, bid_size=100.0, ask_size=100.0)
+        no_book = BestBidAsk(asset_id="no", bid=0.37, ask=0.39, bid_size=100.0, ask_size=100.0)
+        position = Position(side=OutcomeSide.YES, size=1.0, entry_price=0.50, edge_at_entry=0.40, opened_at=datetime.now(timezone.utc))
+
+        signal = engine.evaluate(snapshot, yes_book, no_book, position=position)
+
+        self.assertEqual(signal.action, SignalAction.HOLD)
+        self.assertEqual(signal.reason, "position_unchanged")
 
     def test_execution_price_does_not_fall_back_to_bid(self):
         ask_book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, last_trade_price=0.40)
@@ -229,6 +291,48 @@ class StrategyTests(unittest.TestCase):
         chosen = app._effective_book("yes", now)
         self.assertIsNone(chosen.ask)
         self.assertIsNone(chosen.bid)
+
+    def test_apply_signal_risk_controls_blocks_same_side_reentry(self):
+        app = TradingApplication.__new__(TradingApplication)
+
+        class _Strategy:
+            require_both_prices = True
+            max_entries_per_window = 2
+            max_flips_per_window = 1
+            allow_same_side_reentry = False
+
+        class _Config:
+            strategy = _Strategy()
+
+        app.config = _Config()
+        app._window_entry_count = 1
+        app._window_flip_count = 0
+        app._seen_entry_sides = {OutcomeSide.YES}
+        snapshot = StrategySnapshot(
+            fair_yes=0.7,
+            fair_no=0.3,
+            yes_price=0.45,
+            no_price=0.55,
+            edge_yes=0.25,
+            edge_no=-0.25,
+            sigma_10=0.0,
+            sigma_30=0.0,
+            sigma_slow=0.0,
+            sigma_eff=0.0,
+            momentum_5=0.0,
+            momentum_15=0.0,
+            drift=0.0,
+            x_t=0.0,
+            tau_seconds=20,
+            jump_adjusted=False,
+            outlier_adjusted=False,
+        )
+        signal = TradeSignal(SignalAction.OPEN, side=OutcomeSide.YES, size=0.5, reason="open_edge_signal", snapshot=snapshot)
+
+        blocked = app._apply_signal_risk_controls(signal)
+
+        self.assertEqual(blocked.action, SignalAction.HOLD)
+        self.assertEqual(blocked.reason, "same_side_reentry_blocked")
 
     def test_live_close_position_posts_sell_order(self):
         from polymarket_bot.execution import LiveExecutor
@@ -375,11 +479,11 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(signal.action, SignalAction.HOLD)
         self.assertEqual(signal.reason, "spread_too_wide")
 
-    def test_close_when_edge_decays(self):
-        engine = StrategyEngine(StrategyConfig(size_buckets=default_size_buckets()))
+    def test_close_when_edge_turns_negative(self):
+        engine = StrategyEngine(StrategyConfig(edge_decay_close_threshold=0.0, size_buckets=default_size_buckets()))
         state = _build_state([100.0 + i * 0.12 for i in range(40)])
-        yes_book = BestBidAsk(asset_id="yes", bid=0.89, ask=0.91, bid_size=100.0, ask_size=100.0)
-        no_book = BestBidAsk(asset_id="no", bid=0.09, ask=0.11, bid_size=100.0, ask_size=100.0)
+        yes_book = BestBidAsk(asset_id="yes", bid=0.99, ask=1.00, bid_size=100.0, ask_size=100.0)
+        no_book = BestBidAsk(asset_id="no", bid=0.01, ask=0.02, bid_size=100.0, ask_size=100.0)
         snapshot = engine.compute_snapshot(state, yes_book, no_book, tau_seconds=25)
         position = Position(
             side=OutcomeSide.YES,

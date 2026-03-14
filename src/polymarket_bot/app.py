@@ -8,7 +8,7 @@ from .config import AppConfig
 from .execution import build_executor
 from .gamma import current_window_start, resolve_market, resolve_market_for_window
 from .market_state import RollingState
-from .models import BestBidAsk, OutcomeSide, RuntimeHealth, RuntimeState, SignalAction, WindowStats
+from .models import BestBidAsk, OutcomeSide, RuntimeHealth, RuntimeState, SignalAction, TradeSignal, WindowStats
 from .strategy import StrategyEngine, default_size_buckets
 from .validate import validate_config
 from .ws import market_book_stream, price_stream
@@ -39,6 +39,9 @@ class TradingApplication:
         self._last_wait_log_second = None
         self._latest_spot_price = None
         self._window_stats = WindowStats()
+        self._window_entry_count = 0
+        self._window_flip_count = 0
+        self._seen_entry_sides = set()
         self._running = True
         self._tasks = {}
         self._order_in_flight = False
@@ -218,6 +221,7 @@ class TradingApplication:
         self._window_stats.last_fair_yes = snapshot.fair_yes
         self._log_status(now, snapshot)
         signal = self.strategy.evaluate(snapshot, yes_book, no_book, self.state.position)
+        signal = self._apply_signal_risk_controls(signal)
         if signal.action == SignalAction.HOLD:
             return
 
@@ -240,6 +244,8 @@ class TradingApplication:
             if filled >= requested - 1e-9:
                 self._window_stats.record_action(signal.action.value.upper(), requested, self.config.execution.strategy_type, "filled")
                 self._window_stats.mark_execution_event()
+                if signal.action == SignalAction.FLIP:
+                    self._window_flip_count = getattr(self, "_window_flip_count", 0) + 1
                 self._write_activity_event(
                     now=now,
                     event_type="execution",
@@ -304,6 +310,10 @@ class TradingApplication:
                 candidate_position.size = filled
                 LOGGER.warning("EXECUTION partial_open requested=%.4f filled=%.4f", requested, filled)
             self.state.position = candidate_position
+            self._window_entry_count = getattr(self, "_window_entry_count", 0) + 1
+            if not hasattr(self, "_seen_entry_sides"):
+                self._seen_entry_sides = set()
+            self._seen_entry_sides.add(signal.side)
             self._window_stats.record_action(signal.action.value.upper(), filled, self.config.execution.strategy_type, "filled")
             self._window_stats.record_fill(signal.side, filled, entry_price)
             self._window_stats.mark_execution_event()
@@ -334,6 +344,30 @@ class TradingApplication:
                 _fmt(snapshot.edge_yes),
                 _fmt(snapshot.edge_no),
             )
+
+    def _apply_signal_risk_controls(self, signal):
+        if signal.action == SignalAction.HOLD:
+            return signal
+
+        snapshot = signal.snapshot
+        if (
+            getattr(self.config.strategy, "require_both_prices", False)
+            and snapshot is not None
+            and (snapshot.yes_price is None or snapshot.no_price is None)
+        ):
+            return TradeSignal(SignalAction.HOLD, reason="incomplete_market_prices", snapshot=snapshot)
+
+        if signal.action == SignalAction.OPEN:
+            if getattr(self, "_window_entry_count", 0) >= getattr(self.config.strategy, "max_entries_per_window", 999999):
+                return TradeSignal(SignalAction.HOLD, reason="entry_limit_reached", snapshot=snapshot)
+            if (not getattr(self.config.strategy, "allow_same_side_reentry", True)) and signal.side in getattr(self, "_seen_entry_sides", set()):
+                return TradeSignal(SignalAction.HOLD, reason="same_side_reentry_blocked", snapshot=snapshot)
+
+        if signal.action == SignalAction.FLIP:
+            if getattr(self, "_window_flip_count", 0) >= getattr(self.config.strategy, "max_flips_per_window", 999999):
+                return TradeSignal(SignalAction.HOLD, reason="flip_limit_reached", snapshot=snapshot)
+
+        return signal
 
     def _log_status(self, now, snapshot):
         current_second = int(now.timestamp())
@@ -440,6 +474,9 @@ class TradingApplication:
 
     def _reset_for_market(self, market):
         self._window_stats = WindowStats()
+        self._window_entry_count = 0
+        self._window_flip_count = 0
+        self._seen_entry_sides = set()
         self.market = market
         self.state.market = market
         self.state.last_snapshot = None
