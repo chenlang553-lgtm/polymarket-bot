@@ -54,6 +54,7 @@ class StrategyEngine(object):
             + self.config.drift_weight_m15 * momentum_15 * tau_seconds
         )
 
+        sigma_eff = max(self.config.sigma_floor, sigma_eff)
         denom = max(1e-6, sigma_eff * sqrt(max(1.0, tau_seconds)))
         z_score = (x_t + drift) / denom
         fair_yes = normal_cdf(z_score)
@@ -143,6 +144,8 @@ class StrategyEngine(object):
 
         if best_side is None or best_edge < self.config.min_edge:
             return TradeSignal(SignalAction.HOLD, reason="edge_too_small", snapshot=snapshot)
+        if abs(snapshot.x_t) < self.config.min_abs_x:
+            return TradeSignal(SignalAction.HOLD, reason="inside_no_trade_zone", snapshot=snapshot)
 
         selected_book = book_yes if best_side == OutcomeSide.YES else book_no
         selected_price = snapshot.yes_price if best_side == OutcomeSide.YES else snapshot.no_price
@@ -182,7 +185,7 @@ class StrategyEngine(object):
 
 def default_size_buckets():
     return [
-        SizeBucket(min_edge=0.06, size=0.5),
-        SizeBucket(min_edge=0.09, size=1.0),
-        SizeBucket(min_edge=0.14, size=1.5),
+        SizeBucket(min_edge=0.08, size=0.5),
+        SizeBucket(min_edge=0.12, size=1.0),
+        SizeBucket(min_edge=0.18, size=1.5),
     ]

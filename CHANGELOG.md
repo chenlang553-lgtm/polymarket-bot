@@ -97,6 +97,13 @@
 - Updated strategy edge calculations to use validated midpoint prices instead of synthetic complement quotes
 - Filtered out placeholder `0.01/0.99` books from status, activity, and replay records
 
+## v1.23.0 - 2026-03-15
+
+- Added a volatility floor to the fair-probability engine so tiny BTC moves do not saturate the model into near-certain `Up` or `Down`
+- Added a no-trade zone around the opening price and tightened the main profile to trade later, with higher edge requirements and tighter spreads
+- Reduced single-window aggressiveness by limiting the main profile to one entry and zero flips per window
+- Updated the active `config.json` baseline so the running `main` profile actually uses the tighter parameters
+
 ## v1.22.2 - 2026-03-14
 
 - Updated `scripts/run_iteration.sh` to stop any existing bot process using the same `config + profile` before starting a new iteration

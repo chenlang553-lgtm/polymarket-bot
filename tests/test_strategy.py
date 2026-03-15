@@ -158,6 +158,19 @@ class StrategyTests(unittest.TestCase):
         snapshot = engine.compute_snapshot(state, yes_book, no_book, tau_seconds=15, previous_fair_yes=0.5)
         self.assertTrue(0.5 < snapshot.fair_yes < 1.0)
 
+    def test_sigma_floor_prevents_extreme_probability_from_tiny_move(self):
+        config = StrategyConfig(sigma_floor=0.00005, size_buckets=default_size_buckets())
+        engine = StrategyEngine(config)
+        state = _build_state([100.0] * 80)
+        state.open_price = 100.0
+        state.last_x = 0.0001
+        yes_book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, bid_size=100.0, ask_size=100.0)
+        no_book = BestBidAsk(asset_id="no", bid=0.53, ask=0.55, bid_size=100.0, ask_size=100.0)
+
+        snapshot = engine.compute_snapshot(state, yes_book, no_book, tau_seconds=30)
+
+        self.assertLess(snapshot.fair_yes, 0.8)
+
     def test_best_bid_ask_merges_with_fallback(self):
         primary = BestBidAsk(asset_id="yes", bid=None, ask=None, bid_size=0.0, ask_size=0.0, timestamp_ms=10)
         fallback = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, bid_size=10.0, ask_size=12.0, timestamp_ms=9)
@@ -181,7 +194,7 @@ class StrategyTests(unittest.TestCase):
         self.assertLessEqual(snapshot.fair_yes, config.fair_value_cap)
 
     def test_evaluate_requires_both_prices_when_enabled(self):
-        config = StrategyConfig(require_both_prices=True, size_buckets=default_size_buckets())
+        config = StrategyConfig(require_both_prices=True, min_abs_x=0.0, size_buckets=default_size_buckets())
         engine = StrategyEngine(config)
         snapshot = StrategySnapshot(
             fair_yes=0.8,
@@ -211,7 +224,7 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(signal.reason, "incomplete_market_prices")
 
     def test_positive_edge_decay_does_not_force_close(self):
-        config = StrategyConfig(edge_decay_close_threshold=0.0, size_buckets=default_size_buckets())
+        config = StrategyConfig(edge_decay_close_threshold=0.0, min_abs_x=0.00025, size_buckets=default_size_buckets())
         engine = StrategyEngine(config)
         snapshot = StrategySnapshot(
             fair_yes=0.7,
@@ -240,6 +253,36 @@ class StrategyTests(unittest.TestCase):
 
         self.assertEqual(signal.action, SignalAction.HOLD)
         self.assertEqual(signal.reason, "position_unchanged")
+
+    def test_open_is_blocked_inside_no_trade_zone(self):
+        config = StrategyConfig(min_abs_x=0.00025, require_both_prices=True, size_buckets=default_size_buckets())
+        engine = StrategyEngine(config)
+        snapshot = StrategySnapshot(
+            fair_yes=0.9,
+            fair_no=0.1,
+            yes_price=0.5,
+            no_price=0.5,
+            edge_yes=0.4,
+            edge_no=-0.4,
+            sigma_10=0.0,
+            sigma_30=0.0,
+            sigma_slow=0.0,
+            sigma_eff=0.0,
+            momentum_5=0.0,
+            momentum_15=0.0,
+            drift=0.0,
+            x_t=0.0001,
+            tau_seconds=20,
+            jump_adjusted=False,
+            outlier_adjusted=False,
+        )
+        yes_book = BestBidAsk(asset_id="yes", bid=0.49, ask=0.51, bid_size=100.0, ask_size=100.0)
+        no_book = BestBidAsk(asset_id="no", bid=0.49, ask=0.51, bid_size=100.0, ask_size=100.0)
+
+        signal = engine.evaluate(snapshot, yes_book, no_book, position=None)
+
+        self.assertEqual(signal.action, SignalAction.HOLD)
+        self.assertEqual(signal.reason, "inside_no_trade_zone")
 
     def test_execution_price_does_not_fall_back_to_bid(self):
         ask_book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, last_trade_price=0.40)

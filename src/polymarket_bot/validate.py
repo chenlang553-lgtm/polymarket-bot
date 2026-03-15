@@ -15,8 +15,12 @@ def validate_config(config):
         errors.append("strategy.max_spread must be between 0 and 1")
     if config.strategy.min_top_of_book_size < 0:
         errors.append("strategy.min_top_of_book_size must be non-negative")
+    if config.strategy.sigma_floor <= 0:
+        errors.append("strategy.sigma_floor must be positive")
     if config.strategy.fair_value_cap <= 0.5 or config.strategy.fair_value_cap >= 1:
         errors.append("strategy.fair_value_cap must be between 0.5 and 1")
+    if config.strategy.min_abs_x < 0:
+        errors.append("strategy.min_abs_x must be non-negative")
     if config.strategy.edge_decay_close_threshold < -1 or config.strategy.edge_decay_close_threshold >= 1:
         errors.append("strategy.edge_decay_close_threshold must be between -1 and 1")
     if config.strategy.max_entries_per_window <= 0:
