@@ -9,7 +9,7 @@ from .execution import build_executor
 from .gamma import current_window_start, resolve_market, resolve_market_for_window
 from .market_state import RollingState
 from .models import BestBidAsk, OutcomeSide, RuntimeHealth, RuntimeState, SignalAction, TradeSignal, WindowStats
-from .strategy import StrategyEngine, default_size_buckets
+from .strategy import StrategyEngine, default_price_size_rules, default_size_buckets
 from .validate import validate_config
 from .ws import market_book_stream, price_stream
 
@@ -21,6 +21,8 @@ class TradingApplication:
     def __init__(self, config):
         if not config.strategy.size_buckets:
             config.strategy.size_buckets = default_size_buckets()
+        if not getattr(config.strategy, "price_size_rules", None):
+            config.strategy.price_size_rules = default_price_size_rules()
         self.config = config
         self.market = self._resolve_initial_market()
         self.state = RuntimeState(market=self.market)

@@ -1,6 +1,6 @@
 from math import sqrt
 
-from .config import SizeBucket
+from .config import PriceSizeRule, SizeBucket
 from .market_state import RollingState
 from .math_utils import clamp, logistic, logit, normal_cdf
 from .models import BestBidAsk, OutcomeSide, Position, SignalAction, StrategySnapshot, TradeSignal
@@ -19,6 +19,8 @@ def _weighted_sigma(tau_seconds, sigma_10, sigma_30, sigma_slow):
 class StrategyEngine(object):
     def __init__(self, config):
         self.config = config
+        if not getattr(self.config, "price_size_rules", None):
+            self.config.price_size_rules = default_price_size_rules()
 
     def compute_snapshot(
         self,
@@ -113,7 +115,6 @@ class StrategyEngine(object):
             return TradeSignal(SignalAction.HOLD, reason="incomplete_market_prices", snapshot=snapshot)
 
         best_side, best_edge = self._best_side(snapshot)
-        size = self._size_for_edge(best_edge)
 
         if position is not None:
             current_edge = snapshot.edge_yes if position.side == OutcomeSide.YES else snapshot.edge_no
@@ -121,6 +122,9 @@ class StrategyEngine(object):
                 return TradeSignal(SignalAction.HOLD, reason="missing_current_edge", snapshot=snapshot)
             if best_side is not None and position.side != best_side and best_edge >= self.config.min_edge:
                 selected_book = book_yes if best_side == OutcomeSide.YES else book_no
+                selected_price = snapshot.yes_price if best_side == OutcomeSide.YES else snapshot.no_price
+                if selected_price is None:
+                    return TradeSignal(SignalAction.HOLD, reason="missing_market_price", snapshot=snapshot)
                 if selected_book.spread is not None and selected_book.spread > self.config.max_spread:
                     return TradeSignal(SignalAction.HOLD, reason="spread_too_wide", snapshot=snapshot)
                 if selected_book.bid_size > 0 and selected_book.ask_size > 0 and selected_book.top_size < self.config.min_top_of_book_size:
@@ -128,7 +132,7 @@ class StrategyEngine(object):
                 return TradeSignal(
                     action=SignalAction.FLIP,
                     side=best_side,
-                    size=size,
+                    size=self._size_for_price(selected_price),
                     reason="flip_signal",
                     snapshot=snapshot,
                 )
@@ -159,7 +163,7 @@ class StrategyEngine(object):
         return TradeSignal(
             action=SignalAction.OPEN,
             side=best_side,
-            size=size,
+            size=self._size_for_price(selected_price),
             reason="open_edge_signal",
             snapshot=snapshot,
         )
@@ -174,13 +178,15 @@ class StrategyEngine(object):
             return None, 0.0
         return max(candidates, key=lambda item: item[1])
 
-    def _size_for_edge(self, edge):
+    def _size_for_price(self, price):
+        ordered = sorted(self.config.price_size_rules, key=lambda item: item.max_price)
+        if ordered:
+            for rule in ordered:
+                if price <= rule.max_price:
+                    return rule.size
+            return ordered[-1].size
         ordered = sorted(self.config.size_buckets, key=lambda item: item.min_edge)
-        size = ordered[0].size if ordered else 0.0
-        for bucket in ordered:
-            if edge >= bucket.min_edge:
-                size = bucket.size
-        return size
+        return ordered[0].size if ordered else 0.0
 
 
 def default_size_buckets():
@@ -188,4 +194,12 @@ def default_size_buckets():
         SizeBucket(min_edge=0.08, size=0.5),
         SizeBucket(min_edge=0.12, size=1.0),
         SizeBucket(min_edge=0.18, size=1.5),
+    ]
+
+
+def default_price_size_rules():
+    return [
+        PriceSizeRule(max_price=0.10, size=500.0),
+        PriceSizeRule(max_price=0.50, size=100.0),
+        PriceSizeRule(max_price=1.00, size=60.0),
     ]

@@ -511,6 +511,37 @@ class StrategyTests(unittest.TestCase):
         signal = engine.evaluate(snapshot, yes_book, no_book, position=None)
         self.assertEqual(signal.action, SignalAction.OPEN)
         self.assertEqual(signal.side, OutcomeSide.YES)
+        self.assertEqual(signal.size, 100.0)
+
+    def test_price_band_sizing_uses_cheap_contract_size(self):
+        engine = StrategyEngine(StrategyConfig(min_abs_x=0.0, size_buckets=default_size_buckets()))
+        snapshot = StrategySnapshot(
+            fair_yes=0.2,
+            fair_no=0.8,
+            yes_price=0.04,
+            no_price=0.96,
+            edge_yes=0.16,
+            edge_no=-0.16,
+            sigma_10=0.0,
+            sigma_30=0.0,
+            sigma_slow=0.0,
+            sigma_eff=0.0,
+            momentum_5=0.0,
+            momentum_15=0.0,
+            drift=0.0,
+            x_t=0.001,
+            tau_seconds=20,
+            jump_adjusted=False,
+            outlier_adjusted=False,
+        )
+        yes_book = BestBidAsk(asset_id="yes", bid=0.03, ask=0.049, bid_size=100.0, ask_size=100.0)
+        no_book = BestBidAsk(asset_id="no", bid=0.95, ask=0.97, bid_size=100.0, ask_size=100.0)
+
+        signal = engine.evaluate(snapshot, yes_book, no_book, position=None)
+
+        self.assertEqual(signal.action, SignalAction.OPEN)
+        self.assertEqual(signal.side, OutcomeSide.YES)
+        self.assertEqual(signal.size, 500.0)
 
     def test_hold_when_spread_is_too_wide(self):
         engine = StrategyEngine(StrategyConfig(size_buckets=default_size_buckets()))

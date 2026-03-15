@@ -27,6 +27,19 @@ def validate_config(config):
         errors.append("strategy.max_entries_per_window must be positive")
     if config.strategy.max_flips_per_window < 0:
         errors.append("strategy.max_flips_per_window must be non-negative")
+    if getattr(config.strategy, "price_size_rules", None):
+        previous_max_price = 0.0
+        for rule in config.strategy.price_size_rules:
+            if rule.max_price <= 0 or rule.max_price > 1:
+                errors.append("strategy.price_size_rules max_price must be between 0 and 1")
+                break
+            if rule.size <= 0:
+                errors.append("strategy.price_size_rules size must be positive")
+                break
+            if rule.max_price < previous_max_price:
+                errors.append("strategy.price_size_rules must be sorted by max_price ascending")
+                break
+            previous_max_price = rule.max_price
     if config.execution.mode not in ("paper", "live"):
         errors.append("execution.mode must be 'paper' or 'live'")
     if config.execution.mode == "live" and not config.wallet.private_key:

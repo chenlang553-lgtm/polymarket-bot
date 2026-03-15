@@ -13,6 +13,12 @@ class SizeBucket:
         self.size = size
 
 
+class PriceSizeRule:
+    def __init__(self, max_price, size):
+        self.max_price = max_price
+        self.size = size
+
+
 class MarketConfig:
     def __init__(
         self,
@@ -70,6 +76,7 @@ class StrategyConfig:
         max_flips_per_window=0,
         allow_same_side_reentry=False,
         book_fallback_max_age_seconds=3,
+        price_size_rules=None,
         size_buckets=None,
     ):
         self.decision_window_start_seconds = decision_window_start_seconds
@@ -95,6 +102,7 @@ class StrategyConfig:
         self.max_flips_per_window = max_flips_per_window
         self.allow_same_side_reentry = allow_same_side_reentry
         self.book_fallback_max_age_seconds = book_fallback_max_age_seconds
+        self.price_size_rules = price_size_rules or []
         self.size_buckets = size_buckets or []
 
 
@@ -219,6 +227,10 @@ def load_config(path, profile=None):
             max_flips_per_window=strategy.get("max_flips_per_window", 0),
             allow_same_side_reentry=strategy.get("allow_same_side_reentry", False),
             book_fallback_max_age_seconds=strategy.get("book_fallback_max_age_seconds", 3),
+            price_size_rules=[
+                PriceSizeRule(max_price=item["max_price"], size=item["size"])
+                for item in strategy.get("price_size_rules", [])
+            ],
             size_buckets=[
                 SizeBucket(min_edge=item["min_edge"], size=item["size"])
                 for item in strategy.get("size_buckets", [])

@@ -39,10 +39,10 @@
     "max_flips_per_window": 0,
     "allow_same_side_reentry": false,
     "book_fallback_max_age_seconds": 3,
-    "size_buckets": [
-      {"min_edge": 0.08, "size": 0.5},
-      {"min_edge": 0.12, "size": 1.0},
-      {"min_edge": 0.18, "size": 1.5}
+    "price_size_rules": [
+      {"max_price": 0.10, "size": 500.0},
+      {"max_price": 0.50, "size": 100.0},
+      {"max_price": 1.00, "size": 60.0}
     ]
   },
   "execution": {

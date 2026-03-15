@@ -97,6 +97,12 @@
 - Updated strategy edge calculations to use validated midpoint prices instead of synthetic complement quotes
 - Filtered out placeholder `0.01/0.99` books from status, activity, and replay records
 
+## v1.24.0 - 2026-03-16
+
+- Switched position sizing from edge buckets to explicit price bands: buy `500` shares below `0.10`, `100` shares from `0.10` to `0.50`, and `60` shares above `0.50`
+- Added configurable `price_size_rules` to both the example config and active `config.json`
+- Kept the rest of the v1.23.0 entry filters intact so the sizing change is isolated and testable
+
 ## v1.23.0 - 2026-03-15
 
 - Added a volatility floor to the fair-probability engine so tiny BTC moves do not saturate the model into near-certain `Up` or `Down`
