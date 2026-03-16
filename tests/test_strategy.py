@@ -765,6 +765,126 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(app.executor.open_calls, 0)
         self.assertIsNone(app.state.position)
 
+    def test_live_open_is_blocked_when_reconcile_finds_existing_position(self):
+        app = TradingApplication.__new__(TradingApplication)
+
+        now = datetime.now(timezone.utc)
+        app.market = type(
+            "Market",
+            (),
+            {
+                "slug": "btc-updown-5m-test",
+                "condition_id": None,
+                "yes_token_id": "Y",
+                "no_token_id": "N",
+                "start_time": now - timedelta(seconds=250),
+                "end_time": now + timedelta(seconds=20),
+            },
+        )()
+
+        class _StrategyCfg:
+            require_both_prices = True
+            max_entries_per_window = 2
+            max_flips_per_window = 1
+            allow_same_side_reentry = False
+            book_fallback_max_age_seconds = 3
+
+        class _ExecutionCfg:
+            mode = "live"
+            strategy_type = "main"
+
+        class _LoggingCfg:
+            active_only_last_seconds = 60
+
+        class _Config:
+            strategy = _StrategyCfg()
+            execution = _ExecutionCfg()
+            logging = _LoggingCfg()
+
+        app.config = _Config()
+        app.state = RuntimeState(market=app.market, position=None, last_snapshot=None)
+        app.roll = type("Roll", (), {"open_price": 100.0, "last_price": 101.0})()
+        app.health = type("Health", (), {})()
+        app._latest_trade_imbalance = 0.0
+        app._latest_books = {
+            "Y": BestBidAsk(asset_id="Y", bid=0.45, ask=0.47, bid_size=100, ask_size=100, timestamp_ms=int(now.timestamp() * 1000)),
+            "N": BestBidAsk(asset_id="N", bid=0.53, ask=0.55, bid_size=100, ask_size=100, timestamp_ms=int(now.timestamp() * 1000)),
+        }
+        app._last_usable_books = {}
+        app._order_in_flight = False
+        app._inflight_since_ms = 0
+        app._inflight_context = ""
+        app._last_preopen_reconcile_ms = 0
+        app._window_stats = WindowStats()
+        app._window_entry_count = 0
+        app._window_flip_count = 0
+        app._seen_entry_sides = set()
+        app._last_status_second = None
+        app._last_wait_log_second = None
+        app._write_activity_event = lambda **kwargs: None
+        app._log_status = lambda now, snapshot: None
+        app._log_health = lambda now=None: None
+
+        snapshot = StrategySnapshot(
+            fair_yes=0.62,
+            fair_no=0.38,
+            yes_price=0.47,
+            no_price=0.55,
+            edge_yes=0.15,
+            edge_no=-0.17,
+            sigma_10=0.01,
+            sigma_30=0.01,
+            sigma_slow=0.01,
+            sigma_eff=0.01,
+            momentum_5=0.0,
+            momentum_15=0.0,
+            drift=0.0,
+            x_t=0.0,
+            tau_seconds=20,
+            jump_adjusted=False,
+            outlier_adjusted=False,
+        )
+
+        class FakeStrategy:
+            def compute_snapshot(self, **kwargs):
+                return snapshot
+
+            def evaluate(self, snapshot, yes_book, no_book, position):
+                return TradeSignal(SignalAction.OPEN, side=OutcomeSide.YES, size=1.0, reason="open", snapshot=snapshot)
+
+        class FakeExecutor:
+            def __init__(self):
+                self.open_calls = 0
+
+            def open_position(self, market, signal, entry_price):
+                self.open_calls += 1
+                raise AssertionError("open_position should not be called when reconcile finds a live position")
+
+            def reconcile_position(self, market, local_position):
+                return (
+                    Position(
+                        side=OutcomeSide.NO,
+                        size=3.0,
+                        entry_price=0.52,
+                        edge_at_entry=0.1,
+                        opened_at=now,
+                    ),
+                    True,
+                    "reconstructed",
+                )
+
+        app.strategy = FakeStrategy()
+        app.executor = FakeExecutor()
+
+        app._tick()
+
+        self.assertEqual(app.executor.open_calls, 0)
+        self.assertIsNotNone(app.state.position)
+        self.assertEqual(app.state.position.side, OutcomeSide.NO)
+        self.assertAlmostEqual(app.state.position.size, 3.0)
+        self.assertEqual(app._window_entry_count, 1)
+        self.assertIn(OutcomeSide.NO, app._seen_entry_sides)
+
 
 if __name__ == "__main__":
     unittest.main()

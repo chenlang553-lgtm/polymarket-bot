@@ -49,6 +49,7 @@ class TradingApplication:
         self._order_in_flight = False
         self._inflight_since_ms = 0
         self._inflight_context = ""
+        self._last_preopen_reconcile_ms = 0
 
     async def run(self):
         self._startup_check()
@@ -187,6 +188,40 @@ class TradingApplication:
         LOGGER.warning("EXECUTION reconcile_pending reason=%s context=%s", reason, self._inflight_context)
         return False
 
+    def _preopen_reconcile_live_position(self, now):
+        if self.config.execution.mode.lower() != "live":
+            return False
+        reconcile = getattr(self.executor, "reconcile_position", None)
+        if not callable(reconcile):
+            return False
+        now_ms = int(now.timestamp() * 1000)
+        if now_ms - self._last_preopen_reconcile_ms < 2000:
+            return self.state.position is not None
+        self._last_preopen_reconcile_ms = now_ms
+        position, resolved, reason = reconcile(self.market, self.state.position)
+        if not resolved:
+            LOGGER.warning("EXECUTION preopen_reconcile_pending reason=%s", reason)
+            return self.state.position is not None
+        if position is None:
+            if self.state.position is not None:
+                self.state.position = None
+                self._window_stats.mark_position(None, 0.0)
+                LOGGER.info("EXECUTION preopen_reconcile_flat reason=%s", reason)
+            return False
+        self.state.position = position
+        self._window_stats.mark_position(position.side, position.size)
+        self._window_entry_count = max(getattr(self, "_window_entry_count", 0), 1)
+        if not hasattr(self, "_seen_entry_sides"):
+            self._seen_entry_sides = set()
+        self._seen_entry_sides.add(position.side)
+        LOGGER.warning(
+            "EXECUTION preopen_reconcile_existing side=%s size=%.4f reason=%s",
+            position.side.value,
+            position.size,
+            reason,
+        )
+        return True
+
     def _tick(self):
         if self.market.start_time is None or self.market.end_time is None:
             raise RuntimeError("market end_time is required for live strategy timing")
@@ -276,6 +311,9 @@ class TradingApplication:
                 return
 
         if signal.action in {SignalAction.OPEN, SignalAction.FLIP}:
+            if self._preopen_reconcile_live_position(now):
+                LOGGER.warning("EXECUTION duplicate_open_blocked reason=existing_live_position")
+                return
             selected_book = yes_book if signal.side == OutcomeSide.YES else no_book
             signal_price = snapshot.yes_price if signal.side == OutcomeSide.YES else snapshot.no_price
             entry_price = selected_book.execution_price_for(signal_price)
