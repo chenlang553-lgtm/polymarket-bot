@@ -3,7 +3,7 @@
 
 默认运行在 `--simulate` 模式，可直接验证下单流程（不触发真实下单）。
 如需真实请求，可使用 `--live` 并直接提供 API Key / Secret / Passphrase
-完成 L2 鉴权后提交 FAK 市价单。
+完成 L2 鉴权后，通过官方 `create_and_post_market_order` 接口提交 FAK 市价单。
 """
 
 from __future__ import annotations
@@ -23,6 +23,9 @@ class OrderRequest:
     token_id: str
     side: str  # buy | sell
     size: float
+    price: float = 0.85
+    tick_size: str = "0.01"
+    neg_risk: bool = False
     order_type: str = "FAK"
 
     def validate(self) -> None:
@@ -32,6 +35,8 @@ class OrderRequest:
             raise ValueError("side must be one of: buy, sell")
         if self.size <= 0:
             raise ValueError("size must be > 0")
+        if not (0 < self.price <= 1):
+            raise ValueError("price must be in (0, 1]")
         if self.order_type.upper() != "FAK":
             raise ValueError("only FAK order_type is supported in this helper")
 
@@ -127,20 +132,21 @@ class SimulatedPolymarketTrader:
         raw = {
             "status": "filled" if filled >= req.size else "partial",
             "filled_size": filled,
-            "avg_price": 0.55,
+            "avg_price": req.price,
             "order_type": "FAK",
             "simulated": True,
+            "options": {"tick_size": req.tick_size, "neg_risk": req.neg_risk},
         }
         return _build_report(raw=raw, requested_size=req.size, mode="simulate")
 
 
 class LivePolymarketTrader:
-    """Official py-clob-client based trader.
+    """Official py-clob-client based trader using quickstart order API.
 
     Auth flow:
     1) 初始化 ClobClient
-    2) 直接 set_api_creds(api_key/api_secret/api_passphrase)
-    3) create_market_order + post_order(FAK)
+    2) set_api_creds(api_key/api_secret/api_passphrase)
+    3) create_and_post_market_order(..., order_type=OrderType.FAK)
     """
 
     def __init__(
@@ -155,12 +161,11 @@ class LivePolymarketTrader:
     ) -> None:
         try:
             from py_clob_client.client import ClobClient
-            from py_clob_client.clob_types import ApiCreds, MarketOrderArgs, OrderType
+            from py_clob_client.clob_types import ApiCreds, OrderType
             from py_clob_client.order_builder.constants import BUY, SELL
         except ImportError as exc:
             raise RuntimeError("live mode requires: pip install -e .[trading]") from exc
 
-        self._market_order_args_cls = MarketOrderArgs
         self._order_type_cls = OrderType
         self._buy = BUY
         self._sell = SELL
@@ -190,17 +195,26 @@ class LivePolymarketTrader:
         try:
             side = self._buy if req.side == "buy" else self._sell
             order_type = getattr(self._order_type_cls, req.order_type.upper())
-            order_args = self._market_order_args_cls(
+            raw = self._client.create_and_post_market_order(
                 token_id=req.token_id,
-                amount=float(req.size),
                 side=side,
+                amount=float(req.size),
+                price=float(req.price),
+                options={"tick_size": str(req.tick_size), "neg_risk": bool(req.neg_risk)},
                 order_type=order_type,
             )
-            signed = self._client.create_market_order(order_args)
-            raw = self._client.post_order(signed, order_type)
             return _build_report(raw=raw, requested_size=req.size, mode="live")
         except Exception as exc:
             return _build_report(raw=None, requested_size=req.size, mode="live", error=str(exc))
+
+
+def _parse_bool(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError("expected a boolean value")
 
 
 def parse_args() -> argparse.Namespace:
@@ -212,6 +226,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--token-id", default="demo_yes_token")
     parser.add_argument("--side", choices=["buy", "sell"], default="buy")
     parser.add_argument("--size", type=float, default=30.0)
+    parser.add_argument("--price", type=float, default=float(os.getenv("POLYMARKET_PRICE", "0.85")))
+    parser.add_argument("--tick-size", default=os.getenv("POLYMARKET_TICK_SIZE", "0.01"))
+    parser.add_argument(
+        "--neg-risk",
+        type=_parse_bool,
+        default=_parse_bool(os.getenv("POLYMARKET_NEG_RISK", "false")),
+        help="true/false, used in options.neg_risk",
+    )
     parser.add_argument("--order-type", default="FAK", help="Only FAK is supported")
 
     parser.add_argument("--api-key", default=os.getenv("POLYMARKET_API_KEY", ""))
@@ -236,6 +258,7 @@ def _print_human(req: OrderRequest, report: ExecutionReport) -> None:
     print(f"side          : {req.side}")
     print(f"order_type    : {req.order_type}")
     print(f"requested     : {report.requested_size:.4f}")
+    print(f"limit_price   : {req.price}")
     print(f"filled        : {report.filled_size:.4f}")
     print(f"avg_price     : {report.avg_price}")
     print(f"status        : {report.status}")
@@ -251,6 +274,9 @@ def main() -> int:
         token_id=args.token_id,
         side=args.side,
         size=args.size,
+        price=args.price,
+        tick_size=args.tick_size,
+        neg_risk=args.neg_risk,
         order_type=args.order_type,
     )
 
