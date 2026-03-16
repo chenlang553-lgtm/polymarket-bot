@@ -14,7 +14,7 @@ from polymarket_bot.replay import format_replay_line, run_replay
 from polymarket_bot.report import build_report
 from polymarket_bot.strategy import StrategyEngine, default_size_buckets
 from polymarket_bot.validate import validate_config
-from polymarket_bot.ws import _parse_book_like_message
+from polymarket_bot.ws import _parse_book_like_message, _parse_price_change_messages
 
 
 def _build_state(prices):
@@ -520,6 +520,42 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(book.bid, 0.45)
         self.assertEqual(book.ask, 0.49)
         self.assertEqual(book.last_trade_price, 0.48)
+
+    def test_best_bid_ask_message_is_parsed(self):
+        book = _parse_book_like_message(
+            {
+                "event_type": "best_bid_ask",
+                "asset_id": "yes",
+                "best_bid": "0.41",
+                "best_ask": "0.43",
+                "tick_size": "0.01",
+                "timestamp": "123",
+            },
+            "yes",
+        )
+        self.assertEqual(book.bid, 0.41)
+        self.assertEqual(book.ask, 0.43)
+        self.assertEqual(book.last_trade_price, None)
+
+    def test_price_change_messages_are_parsed(self):
+        books = list(
+            _parse_price_change_messages(
+                {
+                    "event_type": "price_change",
+                    "timestamp": "123",
+                    "price_changes": [
+                        {"asset_id": "yes", "price": "0.44", "best_bid": "0.43", "best_ask": "0.45"},
+                        {"asset_id": "no", "price": "0.56", "best_bid": "0.55", "best_ask": "0.57"},
+                    ],
+                },
+                ["yes", "no"],
+            )
+        )
+        self.assertEqual(len(books), 2)
+        self.assertEqual(books[0].asset_id, "yes")
+        self.assertEqual(books[0].last_trade_price, 0.44)
+        self.assertEqual(books[0].bid, 0.43)
+        self.assertEqual(books[0].ask, 0.45)
 
     def test_archive_writer_appends_jsonl_records(self):
         handle, path = tempfile.mkstemp()

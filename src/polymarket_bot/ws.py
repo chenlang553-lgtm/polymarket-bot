@@ -89,8 +89,8 @@ async def market_books_stream(asset_ids):
         try:
             async with websockets.connect(
                 MARKET_WS_URL,
-                ping_interval=30,
-                ping_timeout=30,
+                ping_interval=None,
+                ping_timeout=None,
                 close_timeout=5,
             ) as websocket:
                 await websocket.send(
@@ -103,22 +103,33 @@ async def market_books_stream(asset_ids):
                         }
                     )
                 )
-                async for raw in websocket:
-                    payload = json.loads(raw)
-                    messages = payload if isinstance(payload, list) else [payload]
-                    for message in messages:
-                        if not isinstance(message, dict):
+                heartbeat = asyncio.create_task(_heartbeat(websocket, "PING", 10))
+                try:
+                    async for raw in websocket:
+                        if raw == "PONG":
                             continue
-                        if message.get("event_type") != "book":
-                            continue
-                        message_asset_id = str(message.get("asset_id") or message.get("assetId") or "")
-                        if message_asset_id and message_asset_id not in asset_ids:
-                            continue
-                        if not message_asset_id:
-                            if len(asset_ids) != 1:
+                        payload = json.loads(raw)
+                        messages = payload if isinstance(payload, list) else [payload]
+                        for message in messages:
+                            if not isinstance(message, dict):
                                 continue
-                            message_asset_id = asset_ids[0]
-                        yield _parse_book_like_message(message, message_asset_id)
+                            event_type = message.get("event_type")
+                            if event_type == "price_change":
+                                for item in _parse_price_change_messages(message, asset_ids):
+                                    yield item
+                                continue
+                            if event_type not in {"book", "best_bid_ask"}:
+                                continue
+                            message_asset_id = str(message.get("asset_id") or message.get("assetId") or "")
+                            if message_asset_id and message_asset_id not in asset_ids:
+                                continue
+                            if not message_asset_id:
+                                if len(asset_ids) != 1:
+                                    continue
+                                message_asset_id = asset_ids[0]
+                            yield _parse_book_like_message(message, message_asset_id)
+                finally:
+                    heartbeat.cancel()
         except Exception as exc:
             LOGGER.warning("Market WebSocket dropped for %s: %s", ",".join(asset_ids), exc)
             await asyncio.sleep(2)
@@ -129,13 +140,30 @@ async def market_book_stream(asset_id):
         yield book
 
 
-async def _heartbeat(websocket, payload):
+async def _heartbeat(websocket, payload, interval_seconds=5):
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(interval_seconds)
         await websocket.send(payload)
 
 
 def _parse_book_like_message(message, asset_id):
+    event_type = message.get("event_type")
+    if event_type == "best_bid_ask":
+        best_bid = _parse_optional_float(message.get("best_bid"))
+        best_ask = _parse_optional_float(message.get("best_ask"))
+        return BestBidAsk(
+            asset_id=asset_id,
+            bid=best_bid,
+            ask=best_ask,
+            bid_size=0.0,
+            ask_size=0.0,
+            timestamp_ms=int(message.get("timestamp", 0) or 0),
+            last_trade_price=None,
+            bids=[],
+            asks=[],
+            tick_size=_parse_optional_float(message.get("tick_size")),
+        )
+
     bids = _parse_levels(message.get("bids", []))
     asks = _parse_levels(message.get("asks", []))
     best_bid_level = _best_bid_level(bids)
@@ -152,6 +180,26 @@ def _parse_book_like_message(message, asset_id):
         asks=asks,
         tick_size=_parse_optional_float(message.get("tick_size")),
     )
+
+
+def _parse_price_change_messages(message, asset_ids):
+    timestamp_ms = int(message.get("timestamp", 0) or 0)
+    for change in message.get("price_changes", []) or []:
+        asset_id = str(change.get("asset_id") or change.get("assetId") or "")
+        if not asset_id or asset_id not in asset_ids:
+            continue
+        yield BestBidAsk(
+            asset_id=asset_id,
+            bid=_parse_optional_float(change.get("best_bid")),
+            ask=_parse_optional_float(change.get("best_ask")),
+            bid_size=0.0,
+            ask_size=0.0,
+            timestamp_ms=timestamp_ms,
+            last_trade_price=_parse_optional_float(change.get("price")),
+            bids=[],
+            asks=[],
+            tick_size=None,
+        )
 
 
 def _parse_optional_float(value):

@@ -164,6 +164,12 @@
 - Increased market WebSocket keepalive tolerance to reduce ping-timeout disconnects
 - Fixed `run_live.sh` so live archives always write to `data/<iteration>/` instead of the project root
 
+## v1.25.9 - 2026-03-16
+
+- Aligned the market WebSocket heartbeat with the official docs by sending text `PING` every 10 seconds
+- Added support for `best_bid_ask` and `price_change` market-channel events to preserve prices when full `book` updates are sparse
+- Added regression tests for `best_bid_ask` and `price_change` parsing
+
 ## v1.4.0 - 2026-03-13
 
 - Added `activity.jsonl` execution ledger with per-action and per-fill events
