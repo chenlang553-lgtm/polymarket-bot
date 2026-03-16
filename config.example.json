@@ -40,22 +40,23 @@
     "allow_same_side_reentry": false,
     "book_fallback_max_age_seconds": 3,
     "price_size_rules": [
-      {"max_price": 0.10, "size": 500.0},
-      {"max_price": 0.50, "size": 100.0},
-      {"max_price": 1.00, "size": 60.0}
+      {"max_price": 0.10, "size": 1.0},
+      {"max_price": 0.50, "size": 1.0},
+      {"max_price": 1.00, "size": 1.0}
     ]
   },
   "execution": {
     "mode": "paper",
-    "order_type": "fok",
+    "order_type": "fak",
     "strategy_version": 5,
     "strategy_profile": "main",
-    "strategy_type": "fair_probability"
+    "strategy_type": "fair_probability",
+    "fixed_order_notional": 1.0
   },
   "wallet": {
     "private_key": "",
     "funder": "",
-    "signature_type": 0,
+    "signature_type": 2,
     "chain_id": 137
   },
   "logging": {

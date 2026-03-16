@@ -42,6 +42,10 @@ def validate_config(config):
             previous_max_price = rule.max_price
     if config.execution.mode not in ("paper", "live"):
         errors.append("execution.mode must be 'paper' or 'live'")
+    if str(config.execution.order_type).lower() not in ("fak", "fok"):
+        errors.append("execution.order_type must be 'fak' or 'fok'")
+    if getattr(config.execution, "fixed_order_notional", 0) <= 0:
+        errors.append("execution.fixed_order_notional must be positive")
     if config.execution.mode == "live" and not config.wallet.private_key:
         errors.append("wallet.private_key is required for live mode")
     if config.market.market_slug and config.market.condition_id:

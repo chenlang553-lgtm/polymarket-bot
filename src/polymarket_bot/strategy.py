@@ -199,7 +199,7 @@ def default_size_buckets():
 
 def default_price_size_rules():
     return [
-        PriceSizeRule(max_price=0.10, size=500.0),
-        PriceSizeRule(max_price=0.50, size=100.0),
-        PriceSizeRule(max_price=1.00, size=60.0),
+        PriceSizeRule(max_price=0.10, size=1.0),
+        PriceSizeRule(max_price=0.50, size=1.0),
+        PriceSizeRule(max_price=1.00, size=1.0),
     ]

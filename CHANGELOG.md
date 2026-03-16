@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.25.0 - 2026-03-16
+
+- Integrated the bot's live executor with the same authenticated market-order flow proven in `trade.py`, including automatic API-credential derivation fallback on invalid L2 creds
+- Switched default runtime sizing to fixed `1u` notional per order and converted execution to compute actual share quantity from the current execution price
+- Changed default live order type to `FAK`, updated strategy default size bands to a uniform logical size of `1.0`, and added validation for `execution.fixed_order_notional`
+
 ## v1.15.0 - 2026-03-14
 
 - Fixed 5-minute window rollover to use the current market end time instead of skipping ahead one extra window

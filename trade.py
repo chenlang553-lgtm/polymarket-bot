@@ -161,14 +161,23 @@ class LivePolymarketTrader:
     ) -> None:
         try:
             from py_clob_client.client import ClobClient
-            from py_clob_client.clob_types import ApiCreds, OrderType
+            from py_clob_client.clob_types import (
+                ApiCreds,
+                MarketOrderArgs,
+                OrderType,
+                PartialCreateOrderOptions,
+            )
             from py_clob_client.order_builder.constants import BUY, SELL
         except ImportError as exc:
             raise RuntimeError("live mode requires: pip install -e .[trading]") from exc
 
+        self._api_creds_cls = ApiCreds
+        self._market_order_args_cls = MarketOrderArgs
         self._order_type_cls = OrderType
+        self._partial_create_order_options_cls = PartialCreateOrderOptions
         self._buy = BUY
         self._sell = SELL
+        self._can_derive = bool(private_key)
 
         client_kwargs: Dict[str, Any] = {
             "chain_id": chain_id,
@@ -180,31 +189,61 @@ class LivePolymarketTrader:
 
         self._client = ClobClient(CLOB_HOST, **client_kwargs)
 
+        if api_key and api_secret and api_passphrase:
+            self._set_api_creds(api_key, api_secret, api_passphrase)
+        elif self._can_derive:
+            self._derive_and_set_api_creds()
+
+    def _set_api_creds(self, api_key: str, api_secret: str, api_passphrase: str) -> None:
         try:
-            creds: ApiCreds = ApiCreds(
+            creds = self._api_creds_cls(
                 api_key=api_key,
                 api_secret=api_secret,
                 api_passphrase=api_passphrase,
             )
         except TypeError:
-            creds = ApiCreds(api_key, api_secret, api_passphrase)
+            creds = self._api_creds_cls(api_key, api_secret, api_passphrase)
         self._client.set_api_creds(creds)
+
+    def _derive_and_set_api_creds(self) -> None:
+        creds = self._client.create_or_derive_api_creds()
+        self._client.set_api_creds(creds)
+
+    @staticmethod
+    def _is_invalid_api_key_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "invalid api key" in message or "unauthorized" in message
+
+    def _submit_order(self, req: OrderRequest) -> Dict[str, Any]:
+        side = self._buy if req.side == "buy" else self._sell
+        order_type = getattr(self._order_type_cls, req.order_type.upper())
+        order_args = self._market_order_args_cls(
+            token_id=req.token_id,
+            amount=float(req.size),
+            side=side,
+            price=float(req.price),
+            order_type=order_type,
+        )
+        options = self._partial_create_order_options_cls(
+            tick_size=str(req.tick_size),
+            neg_risk=bool(req.neg_risk),
+        )
+        signed = self._client.create_market_order(order_args, options=options)
+        return self._client.post_order(signed, order_type)
 
     def submit_market_fak_order(self, req: OrderRequest) -> ExecutionReport:
         req.validate()
         try:
-            side = self._buy if req.side == "buy" else self._sell
-            order_type = getattr(self._order_type_cls, req.order_type.upper())
-            raw = self._client.create_and_post_market_order(
-                token_id=req.token_id,
-                side=side,
-                amount=float(req.size),
-                price=float(req.price),
-                options={"tick_size": str(req.tick_size), "neg_risk": bool(req.neg_risk)},
-                order_type=order_type,
-            )
+            raw = self._submit_order(req)
             return _build_report(raw=raw, requested_size=req.size, mode="live")
         except Exception as exc:
+            if self._can_derive and self._is_invalid_api_key_error(exc):
+                try:
+                    self._derive_and_set_api_creds()
+                    raw = self._submit_order(req)
+                    return _build_report(raw=raw, requested_size=req.size, mode="live")
+                except Exception as retry_exc:
+                    return _build_report(raw=None, requested_size=req.size, mode="live", error=str(retry_exc))
             return _build_report(raw=None, requested_size=req.size, mode="live", error=str(exc))
 
 
@@ -286,17 +325,18 @@ def main() -> int:
 
     if use_live:
         missing = []
-        if not args.api_key:
+        has_level2 = bool(args.api_key and args.api_secret and args.api_passphrase)
+        has_level1 = bool(args.private_key)
+        if not has_level2 and not has_level1:
             missing.append("api-key")
-        if not args.api_secret:
             missing.append("api-secret")
-        if not args.api_passphrase:
             missing.append("api-passphrase")
+            missing.append("private-key")
         if missing:
             payload = {
                 "success": False,
                 "status": "rejected",
-                "error": "live mode requires " + ", ".join(f"--{name}" for name in missing),
+                "error": "live mode requires valid L2 creds or a signer key; missing " + ", ".join(f"--{name}" for name in missing),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
             print(json.dumps(payload, ensure_ascii=False, indent=2))

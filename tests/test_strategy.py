@@ -6,7 +6,7 @@ import os
 
 from polymarket_bot.app import TradingApplication
 from polymarket_bot.archive import JsonlWriter, WindowArchiveWriter
-from polymarket_bot.config import StrategyConfig, load_config
+from polymarket_bot.config import ExecutionConfig, StrategyConfig, load_config
 from polymarket_bot.gamma import build_market_slug
 from polymarket_bot.market_state import RollingState
 from polymarket_bot.models import BestBidAsk, OutcomeSide, Position, RuntimeState, SignalAction, StrategySnapshot, TradeSignal, WindowStats
@@ -390,23 +390,30 @@ class StrategyTests(unittest.TestCase):
                 posted.append((signed, order_type))
 
         class FakeOrder:
-            def __init__(self, token_id, amount, side, order_type):
+            def __init__(self, token_id, amount, side, price=None, order_type=None):
                 self.token_id = token_id
                 self.amount = amount
                 self.side = side
+                self.price = price
                 self.order_type = order_type
 
         class FakeOrderType:
             FOK = "fok"
+        class FakeOptions:
+            def __init__(self, tick_size=None, neg_risk=None):
+                self.tick_size = tick_size
+                self.neg_risk = neg_risk
 
         executor = LiveExecutor.__new__(LiveExecutor)
-        executor.execution = type("Exec", (), {"order_type": "fok"})()
+        executor.execution = type("Exec", (), {"order_type": "fok", "fixed_order_notional": 1.0})()
         executor._market_order_args_cls = FakeOrder
         executor._order_type_cls = FakeOrderType
+        executor._partial_create_order_options_cls = FakeOptions
         executor._sell_constant = "SELL"
         executor._client = FakeClient()
+        executor._can_derive = False
 
-        market = type("Market", (), {"yes_token_id": "Y", "no_token_id": "N"})()
+        market = type("Market", (), {"yes_token_id": "Y", "no_token_id": "N", "tick_size": 0.01, "neg_risk": False})()
         position = Position(side=OutcomeSide.NO, size=1.25, entry_price=0.6, edge_at_entry=0.08, opened_at=datetime.now(timezone.utc))
 
         executor.close_position(market, position)
@@ -511,7 +518,7 @@ class StrategyTests(unittest.TestCase):
         signal = engine.evaluate(snapshot, yes_book, no_book, position=None)
         self.assertEqual(signal.action, SignalAction.OPEN)
         self.assertEqual(signal.side, OutcomeSide.YES)
-        self.assertEqual(signal.size, 100.0)
+        self.assertEqual(signal.size, 1.0)
 
     def test_price_band_sizing_uses_cheap_contract_size(self):
         engine = StrategyEngine(StrategyConfig(min_abs_x=0.0, size_buckets=default_size_buckets()))
@@ -541,7 +548,30 @@ class StrategyTests(unittest.TestCase):
 
         self.assertEqual(signal.action, SignalAction.OPEN)
         self.assertEqual(signal.side, OutcomeSide.YES)
-        self.assertEqual(signal.size, 500.0)
+        self.assertEqual(signal.size, 1.0)
+
+    def test_paper_executor_uses_fixed_order_notional(self):
+        from polymarket_bot.execution import PaperExecutor
+
+        execution = ExecutionConfig(mode="paper", fixed_order_notional=1.0)
+        executor = PaperExecutor(execution)
+        signal = type(
+            "Signal",
+            (),
+            {
+                "side": OutcomeSide.YES,
+                "size": 999.0,
+                "reason": "test",
+                "snapshot": type("Snap", (), {"edge_yes": 0.1, "edge_no": -0.1})(),
+            },
+        )()
+
+        position = executor.open_position(None, signal, 0.25)
+
+        self.assertAlmostEqual(position.size, 4.0)
+        self.assertAlmostEqual(executor.last_report["requested_size"], 4.0)
+        self.assertAlmostEqual(executor.last_report["requested_notional"], 1.0)
+        self.assertAlmostEqual(executor.last_report["filled_notional"], 1.0)
 
     def test_hold_when_spread_is_too_wide(self):
         engine = StrategyEngine(StrategyConfig(size_buckets=default_size_buckets()))
@@ -573,31 +603,13 @@ class StrategyTests(unittest.TestCase):
     def test_live_open_sets_error_report_on_submission_failure(self):
         from polymarket_bot.execution import LiveExecutor
 
-        class FakeClient:
-            def create_market_order(self, order):
-                return {"signed": order}
-
-            def post_order(self, signed, order_type):
-                raise RuntimeError("boom")
-
-        class FakeOrder:
-            def __init__(self, token_id, amount, side, order_type):
-                self.token_id = token_id
-                self.amount = amount
-                self.side = side
-                self.order_type = order_type
-
-        class FakeOrderType:
-            FOK = "fok"
-
         executor = LiveExecutor.__new__(LiveExecutor)
-        executor.execution = type("Exec", (), {"order_type": "fok"})()
-        executor._market_order_args_cls = FakeOrder
-        executor._order_type_cls = FakeOrderType
+        executor.execution = type("Exec", (), {"order_type": "fok", "fixed_order_notional": 1.0})()
+        executor._can_derive = False
         executor._buy_constant = "BUY"
-        executor._client = FakeClient()
+        executor._submit_with_auth_retry = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
 
-        market = type("Market", (), {"yes_token_id": "Y", "no_token_id": "N"})()
+        market = type("Market", (), {"yes_token_id": "Y", "no_token_id": "N", "tick_size": 0.01, "neg_risk": False})()
         signal = type("Signal", (), {
             "side": OutcomeSide.YES,
             "size": 1.0,
@@ -611,6 +623,8 @@ class StrategyTests(unittest.TestCase):
         self.assertIsNotNone(executor.last_report)
         self.assertFalse(executor.last_report["success"])
         self.assertEqual(executor.last_report["status"], "rejected")
+        self.assertAlmostEqual(executor.last_report["requested_size"], 2.0)
+        self.assertAlmostEqual(executor.last_report["requested_notional"], 1.0)
 
     def test_flip_is_deferred_after_close_in_same_tick(self):
         app = TradingApplication.__new__(TradingApplication)

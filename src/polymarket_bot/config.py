@@ -107,12 +107,21 @@ class StrategyConfig:
 
 
 class ExecutionConfig:
-    def __init__(self, mode="paper", order_type="fok", strategy_version=1, strategy_profile="main", strategy_type="fair_probability"):
+    def __init__(
+        self,
+        mode="paper",
+        order_type="fak",
+        strategy_version=1,
+        strategy_profile="main",
+        strategy_type="fair_probability",
+        fixed_order_notional=1.0,
+    ):
         self.mode = mode
         self.order_type = order_type
         self.strategy_version = strategy_version
         self.strategy_profile = strategy_profile
         self.strategy_type = strategy_type
+        self.fixed_order_notional = fixed_order_notional
 
 
 class WalletConfig:
