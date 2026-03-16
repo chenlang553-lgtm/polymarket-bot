@@ -83,15 +83,21 @@ async def rtds_price_stream(symbol, topic="crypto_prices"):
             await asyncio.sleep(2)
 
 
-async def market_book_stream(asset_id):
+async def market_books_stream(asset_ids):
+    asset_ids = [str(asset_id) for asset_id in asset_ids]
     while True:
         try:
-            async with websockets.connect(MARKET_WS_URL) as websocket:
+            async with websockets.connect(
+                MARKET_WS_URL,
+                ping_interval=30,
+                ping_timeout=30,
+                close_timeout=5,
+            ) as websocket:
                 await websocket.send(
                     json.dumps(
                         {
                             "type": "market",
-                            "assets_ids": [asset_id],
+                            "assets_ids": asset_ids,
                             "custom_feature_enabled": True,
                             "initial_dump": True,
                         }
@@ -105,10 +111,22 @@ async def market_book_stream(asset_id):
                             continue
                         if message.get("event_type") != "book":
                             continue
-                        yield _parse_book_like_message(message, asset_id)
+                        message_asset_id = str(message.get("asset_id") or message.get("assetId") or "")
+                        if message_asset_id and message_asset_id not in asset_ids:
+                            continue
+                        if not message_asset_id:
+                            if len(asset_ids) != 1:
+                                continue
+                            message_asset_id = asset_ids[0]
+                        yield _parse_book_like_message(message, message_asset_id)
         except Exception as exc:
-            LOGGER.warning("Market WebSocket dropped for %s: %s", asset_id, exc)
+            LOGGER.warning("Market WebSocket dropped for %s: %s", ",".join(asset_ids), exc)
             await asyncio.sleep(2)
+
+
+async def market_book_stream(asset_id):
+    async for book in market_books_stream([asset_id]):
+        yield book
 
 
 async def _heartbeat(websocket, payload):

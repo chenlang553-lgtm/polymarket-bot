@@ -37,11 +37,11 @@ if [[ -z "${POLYMARKET_FUNDER:-}" ]]; then
   exit 1
 fi
 
-"${PYTHON_BIN}" - "${CONFIG_PATH}" "${LIVE_CONFIG_PATH}" <<'PY'
+"${PYTHON_BIN}" - "${CONFIG_PATH}" "${LIVE_CONFIG_PATH}" "${ITERATION}" "${PROJECT_ROOT}" <<'PY'
 import json
 import sys
 
-src_path, dst_path = sys.argv[1:3]
+src_path, dst_path, iteration, project_root = sys.argv[1:5]
 
 with open(src_path, "r", encoding="utf-8") as handle:
     config = json.load(handle)
@@ -54,6 +54,11 @@ execution["fixed_order_notional"] = 1.0
 wallet = config.setdefault("wallet", {})
 wallet["signature_type"] = int(wallet.get("signature_type") or 2)
 wallet["chain_id"] = int(wallet.get("chain_id") or 137)
+
+logging = config.setdefault("logging", {})
+logging["window_close_path"] = f"{project_root}/data/{iteration}/window_close.jsonl"
+logging["activity_path"] = f"{project_root}/data/{iteration}/activity.jsonl"
+logging["market_state_path"] = f"{project_root}/data/{iteration}/market_state.jsonl"
 
 with open(dst_path, "w", encoding="utf-8") as handle:
     json.dump(config, handle, ensure_ascii=False, indent=2)

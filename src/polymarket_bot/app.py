@@ -11,7 +11,7 @@ from .market_state import RollingState
 from .models import BestBidAsk, OutcomeSide, RuntimeHealth, RuntimeState, SignalAction, TradeSignal, WindowStats
 from .strategy import StrategyEngine, default_price_size_rules, default_size_buckets
 from .validate import validate_config
-from .ws import market_book_stream, price_stream
+from .ws import market_books_stream, price_stream
 
 
 LOGGER = logging.getLogger(__name__)
@@ -112,14 +112,15 @@ class TradingApplication:
             await self._queue.put(("price_stream_event", {"event": "error", "message": str(exc)}))
             await self._queue.put(("task_failure", {"task": "prices", "error": str(exc)}))
 
-    async def _consume_books(self, asset_id):
-        await self._queue.put(("book_stream_event", {"event": "connect", "asset_id": asset_id}))
+    async def _consume_books(self):
+        asset_ids = self._market_asset_ids()
+        await self._queue.put(("book_stream_event", {"event": "connect", "asset_ids": asset_ids}))
         try:
-            async for book in market_book_stream(asset_id):
+            async for book in market_books_stream(asset_ids):
                 await self._queue.put(("book", book))
         except Exception as exc:
-            await self._queue.put(("book_stream_event", {"event": "error", "message": str(exc), "asset_id": asset_id}))
-            await self._queue.put(("task_failure", {"task": "book:%s" % asset_id, "error": str(exc), "asset_id": asset_id}))
+            await self._queue.put(("book_stream_event", {"event": "error", "message": str(exc), "asset_ids": asset_ids}))
+            await self._queue.put(("task_failure", {"task": "books", "error": str(exc), "asset_ids": asset_ids}))
 
     def _handle_price(self, tick):
         from .models import PriceTick
@@ -766,13 +767,11 @@ class TradingApplication:
         self._tasks["health"] = asyncio.create_task(self._health_loop())
 
     def _start_book_tasks(self):
-        for asset_id in self._market_asset_ids():
-            task_name = "book:%s" % asset_id
-            self._tasks[task_name] = asyncio.create_task(self._consume_books(asset_id))
+        self._tasks["books"] = asyncio.create_task(self._consume_books())
 
     def _cancel_book_tasks(self):
         for task_name in list(self._tasks.keys()):
-            if task_name.startswith("book:"):
+            if task_name == "books":
                 self._tasks[task_name].cancel()
                 del self._tasks[task_name]
 
@@ -796,10 +795,8 @@ class TradingApplication:
             return
         if task_name == "prices":
             self._tasks["prices"] = asyncio.create_task(self._consume_prices())
-        elif task_name.startswith("book:"):
-            asset_id = payload.get("asset_id")
-            if asset_id:
-                self._tasks[task_name] = asyncio.create_task(self._consume_books(asset_id))
+        elif task_name == "books":
+            self._tasks["books"] = asyncio.create_task(self._consume_books())
 
     async def _shutdown(self, reason):
         if not self._running:

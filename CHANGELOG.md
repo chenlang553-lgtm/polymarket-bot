@@ -158,6 +158,12 @@
 - Improved book caching so partial market book updates merge with the previous usable snapshot instead of wiping the opposite side
 - Added regression tests for partial book merging and live inflight recovery
 
+## v1.25.8 - 2026-03-16
+
+- Switched live market book ingestion from two separate outcome WebSockets to one combined dual-outcome stream
+- Increased market WebSocket keepalive tolerance to reduce ping-timeout disconnects
+- Fixed `run_live.sh` so live archives always write to `data/<iteration>/` instead of the project root
+
 ## v1.4.0 - 2026-03-13
 
 - Added `activity.jsonl` execution ledger with per-action and per-fill events
