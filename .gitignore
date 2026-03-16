@@ -17,3 +17,4 @@ logs/
 data/
 .runtime/
 monitor_config.json
+.live_*.json

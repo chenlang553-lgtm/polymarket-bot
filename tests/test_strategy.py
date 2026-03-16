@@ -425,6 +425,39 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(signed["signed"].amount, 1.25)
         self.assertEqual(signed["signed"].side, "SELL")
 
+    def test_live_open_uses_notional_for_market_buy_amount(self):
+        from polymarket_bot.execution import LiveExecutor
+
+        submitted = []
+
+        executor = LiveExecutor.__new__(LiveExecutor)
+        executor.execution = type("Exec", (), {"order_type": "fok", "fixed_order_notional": 1.0})()
+        executor._can_derive = False
+        executor._buy_constant = "BUY"
+        executor._submit_with_auth_retry = lambda market, token_id, amount, side, price: submitted.append(
+            (token_id, amount, side, price)
+        ) or {"success": True, "status": "filled", "filled_size": 50.0, "avg_price": 0.02}
+
+        market = type("Market", (), {"yes_token_id": "Y", "no_token_id": "N", "tick_size": 0.01, "neg_risk": False})()
+        signal = type("Signal", (), {
+            "side": OutcomeSide.YES,
+            "size": 1.0,
+            "reason": "test",
+            "snapshot": type("Snap", (), {"edge_yes": 0.1, "edge_no": -0.1})(),
+        })()
+
+        position = executor.open_position(market, signal, 0.02)
+
+        self.assertEqual(len(submitted), 1)
+        token_id, amount, side, price = submitted[0]
+        self.assertEqual(token_id, "Y")
+        self.assertEqual(side, "BUY")
+        self.assertAlmostEqual(amount, 1.0)
+        self.assertAlmostEqual(price, 0.02)
+        self.assertAlmostEqual(position.size, 50.0)
+        self.assertAlmostEqual(executor.last_report["requested_notional"], 1.0)
+        self.assertAlmostEqual(executor.last_report["requested_size"], 50.0)
+
     def test_book_message_uses_true_best_bid_and_ask(self):
         book = _parse_book_like_message(
             {

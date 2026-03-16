@@ -278,33 +278,38 @@ class LiveExecutor:
     def open_position(self, market, signal, ask_price):
         token_id = market.yes_token_id if signal.side == OutcomeSide.YES else market.no_token_id
         notional = self._requested_notional(signal)
-        share_size = self._shares_for_notional(notional, ask_price)
+        estimated_shares = self._shares_for_notional(notional, ask_price)
         try:
-            raw = self._submit_with_auth_retry(market, token_id, share_size, self._buy_constant, ask_price)
-            self.last_report = _report_with_notional(_build_report(raw, share_size, ask_price), notional, ask_price)
+            # py-clob-client market BUY orders expect the collateral/notional amount, not share quantity.
+            raw = self._submit_with_auth_retry(market, token_id, notional, self._buy_constant, ask_price)
+            self.last_report = _report_with_notional(_build_report(raw, estimated_shares, ask_price), notional, ask_price)
             LOGGER.info(
                 "LIVE OPEN side=%s notional=%.4f shares=%.4f token=%s status=%s filled=%.4f",
                 signal.side,
                 notional,
-                share_size,
+                estimated_shares,
                 token_id,
                 self.last_report["status"],
                 self.last_report["filled_size"],
             )
         except Exception as exc:
-            self.last_report = _report_with_notional(_build_report(None, share_size, ask_price, error=str(exc)), notional, ask_price)
+            self.last_report = _report_with_notional(
+                _build_report(None, estimated_shares, ask_price, error=str(exc)),
+                notional,
+                ask_price,
+            )
             LOGGER.error(
                 "LIVE OPEN failed side=%s notional=%.4f shares=%.4f token=%s error=%s",
                 signal.side,
                 notional,
-                share_size,
+                estimated_shares,
                 token_id,
                 exc,
             )
             raise
         return Position(
             side=signal.side,
-            size=share_size,
+            size=estimated_shares,
             entry_price=ask_price,
             edge_at_entry=signal.snapshot.edge_yes if signal.side == OutcomeSide.YES else signal.snapshot.edge_no,
             opened_at=datetime.now(timezone.utc),
