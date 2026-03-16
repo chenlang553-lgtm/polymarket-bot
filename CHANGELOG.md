@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.25.11 - 2026-03-17
+
+- Raised the default live `execution.market_order_price_buffer` from `0.001` to `0.05` to make FAK market orders substantially more aggressive
+- Updated both example and local runtime configs to use the higher live order-price buffer
+
 ## v1.25.10 - 2026-03-17
 
 - Added a live-only `execution.market_order_price_buffer` setting for more aggressive FAK worst-price limits
