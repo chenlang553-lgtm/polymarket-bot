@@ -13,13 +13,34 @@ from pathlib import Path
 
 PROJECT_ROOT = Path("/root/polymarket_bot")
 CACHE_PATH = PROJECT_ROOT / ".runtime" / ".wecom_token_cache.json"
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "monitor_config.json"
 
 
-def _required_env(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if not value:
-        raise RuntimeError(f"Missing env: {name}")
-    return value
+def load_config(path: str | Path | None) -> dict:
+    if not path:
+        return {}
+    target = Path(path)
+    if not target.exists():
+        return {}
+    return json.loads(target.read_text(encoding="utf-8"))
+
+
+def _nested(config: dict, *keys: str, default: str = "") -> str:
+    current = config
+    for key in keys:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(key)
+    if current is None:
+        return default
+    return str(current)
+
+
+def _required_value(value: str, name: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise RuntimeError(f"Missing config/env: {name}")
+    return normalized
 
 
 def _read_cache() -> dict | None:
@@ -90,28 +111,46 @@ def send_text(*, token: str, agent_id: str, content: str, to_user: str = "", to_
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="WeCom text sender")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--content", required=True)
-    parser.add_argument("--to_user", default=os.getenv("WECOM_TO_USER", ""))
-    parser.add_argument("--to_party", default=os.getenv("WECOM_TO_PARTY", ""))
-    parser.add_argument("--to_tag", default=os.getenv("WECOM_TO_TAG", ""))
+    parser.add_argument("--to_user", default="")
+    parser.add_argument("--to_party", default="")
+    parser.add_argument("--to_tag", default="")
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    if not args.to_user and not args.to_party and not args.to_tag:
+    config = load_config(args.config)
+    corp_id = _required_value(
+        _nested(config, "wecom", "corp_id", default=os.getenv("WECOM_CORP_ID", "")),
+        "WECOM_CORP_ID / wecom.corp_id",
+    )
+    corp_secret = _required_value(
+        _nested(config, "wecom", "corp_secret", default=os.getenv("WECOM_CORP_SECRET", "")),
+        "WECOM_CORP_SECRET / wecom.corp_secret",
+    )
+    agent_id = _required_value(
+        _nested(config, "wecom", "agent_id", default=os.getenv("WECOM_AGENT_ID", "")),
+        "WECOM_AGENT_ID / wecom.agent_id",
+    )
+    to_user = args.to_user or _nested(config, "wecom", "to_user", default=os.getenv("WECOM_TO_USER", ""))
+    to_party = args.to_party or _nested(config, "wecom", "to_party", default=os.getenv("WECOM_TO_PARTY", ""))
+    to_tag = args.to_tag or _nested(config, "wecom", "to_tag", default=os.getenv("WECOM_TO_TAG", ""))
+
+    if not to_user and not to_party and not to_tag:
         print("No recipients configured", file=sys.stderr)
         return 2
 
-    token = get_access_token(_required_env("WECOM_CORP_ID"), _required_env("WECOM_CORP_SECRET"))
+    token = get_access_token(corp_id, corp_secret)
     result = send_text(
         token=token,
-        agent_id=_required_env("WECOM_AGENT_ID"),
+        agent_id=agent_id,
         content=args.content,
-        to_user=args.to_user,
-        to_party=args.to_party,
-        to_tag=args.to_tag,
+        to_user=to_user,
+        to_party=to_party,
+        to_tag=to_tag,
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))

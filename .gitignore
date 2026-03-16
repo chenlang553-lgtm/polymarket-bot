@@ -16,3 +16,4 @@ nohup.out
 logs/
 data/
 .runtime/
+monitor_config.json

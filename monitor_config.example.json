@@ -1,0 +1,13 @@
+{
+  "wecom": {
+    "corp_id": "",
+    "corp_secret": "",
+    "agent_id": "",
+    "to_user": "",
+    "to_party": "",
+    "to_tag": ""
+  },
+  "monitor": {
+    "interval_seconds": 300
+  }
+}

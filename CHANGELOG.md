@@ -11,6 +11,11 @@
 - Added `scripts/monitor_iteration.py` to summarize the latest 5-minute order/window activity and push it to WeCom on a fixed interval
 - Added `scripts/run_monitor.sh` to stop an older monitor process and start a fresh background monitor for a given iteration
 
+## v1.25.4 - 2026-03-16
+
+- Moved WeCom credentials, recipients, and monitor interval into a dedicated `monitor_config.json`
+- Added `monitor_config.example.json` and updated the monitor scripts to read from the standalone monitor config by default
+
 ## v1.25.0 - 2026-03-16
 
 - Integrated the bot's live executor with the same authenticated market-order flow proven in `trade.py`, including automatic API-credential derivation fallback on invalid L2 creds

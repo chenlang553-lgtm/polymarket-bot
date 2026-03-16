@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import subprocess
 import sys
 import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+
+from wecom_send import DEFAULT_CONFIG_PATH, get_access_token, load_config, send_text
 
 
 PROJECT_ROOT = Path("/root/polymarket_bot")
@@ -55,12 +55,26 @@ def _fmt_time(ms: int | None) -> str:
     return datetime.fromtimestamp(ms / 1000.0, tz=TZ).strftime("%m-%d %H:%M:%S")
 
 
-def _send_wecom(content: str) -> None:
-    script_path = PROJECT_ROOT / "scripts" / "wecom_send.py"
-    subprocess.run(
-        [sys.executable, str(script_path), "--content", content],
-        check=True,
-        cwd=str(PROJECT_ROOT),
+def _send_wecom(content: str, config: dict) -> None:
+    wecom = config.get("wecom", {})
+    corp_id = str(wecom.get("corp_id", "")).strip()
+    corp_secret = str(wecom.get("corp_secret", "")).strip()
+    agent_id = str(wecom.get("agent_id", "")).strip()
+    to_user = str(wecom.get("to_user", "")).strip()
+    to_party = str(wecom.get("to_party", "")).strip()
+    to_tag = str(wecom.get("to_tag", "")).strip()
+    if not corp_id or not corp_secret or not agent_id:
+        raise RuntimeError("monitor_config.json is missing wecom credentials")
+    if not to_user and not to_party and not to_tag:
+        raise RuntimeError("monitor_config.json has no WeCom recipients configured")
+    token = get_access_token(corp_id, corp_secret)
+    send_text(
+        token=token,
+        agent_id=agent_id,
+        content=content,
+        to_user=to_user,
+        to_party=to_party,
+        to_tag=to_tag,
     )
 
 
@@ -156,15 +170,18 @@ def _summarize(iteration: str, data_dir: Path, state: dict) -> tuple[str, dict]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Send 5-minute live trading summaries to WeCom")
     parser.add_argument("iteration")
-    parser.add_argument("--interval", type=int, default=300, help="Seconds between pushes")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
+    parser.add_argument("--interval", type=int, default=0, help="Seconds between pushes, 0 means use config")
     parser.add_argument("--once", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    config = load_config(args.config)
     data_dir = PROJECT_ROOT / "data" / args.iteration
     state_path = PROJECT_ROOT / ".runtime" / f"monitor_{args.iteration}.json"
+    interval = int(args.interval or config.get("monitor", {}).get("interval_seconds", 300))
 
     if not data_dir.exists():
         print(f"Data dir not found: {data_dir}", file=sys.stderr)
@@ -173,11 +190,11 @@ def main() -> int:
     while True:
         state = _load_state(state_path)
         content, next_state = _summarize(args.iteration, data_dir, state)
-        _send_wecom(content)
+        _send_wecom(content, config)
         _save_state(state_path, next_state)
         if args.once:
             return 0
-        time.sleep(max(60, args.interval))
+        time.sleep(max(60, interval))
 
 
 if __name__ == "__main__":
