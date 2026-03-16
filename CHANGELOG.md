@@ -3,6 +3,7 @@
 ## v1.25.1 - 2026-03-16
 
 - Added environment-variable fallback for live wallet settings so the main bot can use the same `POLYMARKET_PRIVATE_KEY`, `POLYMARKET_FUNDER`, `POLYMARKET_SIGNATURE_TYPE`, and `POLYMARKET_CHAIN_ID` flow as `trade.py`
+- Added `scripts/run_live.sh` to generate a live runtime config, stop the previous live process, and start a new live bot run from a single version argument
 
 ## v1.25.0 - 2026-03-16
 
