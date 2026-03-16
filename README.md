@@ -52,6 +52,21 @@ Run in paper mode:
 polymarket-bot run --config config.json
 ```
 
+Standalone order-flow verification (official market-order shape + FAK):
+
+```bash
+python trade.py --simulate --token-id demo_yes_token --side buy --size 30 --order-type FAK --json
+```
+
+Live request (direct API key auth, no L1 derive flow):
+
+```bash
+python trade.py --live --token-id <token_id> --side buy --size 30 --order-type FAK \
+  --api-key <api_key> --api-secret <api_secret> --api-passphrase <api_passphrase>
+```
+
+`trade.py` defaults to simulation mode for safe local verification. In `--live` mode, it authenticates with `api_key/api_secret/api_passphrase` (L2 creds) and then sends the FAK market order.
+
 Start a detached iteration run with a versioned log/data directory:
 
 ```bash
