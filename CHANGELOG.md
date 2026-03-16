@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.25.10 - 2026-03-17
+
+- Added a live-only `execution.market_order_price_buffer` setting for more aggressive FAK worst-price limits
+- Live entry pricing now applies the configured buffer and rounds up to tick size before submission
+- Added validation and regression tests for the live market-order price buffer
+
 ## v1.25.1 - 2026-03-16
 
 - Added environment-variable fallback for live wallet settings so the main bot can use the same `POLYMARKET_PRIVATE_KEY`, `POLYMARKET_FUNDER`, `POLYMARKET_SIGNATURE_TYPE`, and `POLYMARKET_CHAIN_ID` flow as `trade.py`

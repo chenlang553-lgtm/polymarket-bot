@@ -120,6 +120,44 @@ class StrategyTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_validate_rejects_invalid_market_order_price_buffer(self):
+        handle, path = tempfile.mkstemp()
+        os.close(handle)
+        try:
+            with open(path, "w") as saved:
+                saved.write(
+                    json.dumps(
+                        {
+                            "market": {"slug_prefix": "btc-updown-5m"},
+                            "price_feed": {"symbol": "btcusdt", "provider": "binance"},
+                            "strategy": {
+                                "decision_window_start_seconds": 45,
+                                "decision_window_end_seconds": 8,
+                                "min_edge": 0.04,
+                                "max_spread": 0.03,
+                                "min_top_of_book_size": 1
+                            },
+                            "execution": {"mode": "paper", "market_order_price_buffer": -0.01},
+                            "wallet": {},
+                            "logging": {
+                                "window_close_path": "window_close.jsonl",
+                                "activity_path": "activity.jsonl",
+                                "market_state_path": "market_state.jsonl",
+                                "health_log_interval_seconds": 15,
+                                "stale_data_threshold_seconds": 10,
+                                "shutdown_grace_seconds": 5,
+                                "supervisor_restart_backoff_seconds": 2
+                            }
+                        }
+                    )
+                )
+            config = load_config(path)
+            result = validate_config(config)
+            self.assertTrue(result["errors"])
+            self.assertIn("execution.market_order_price_buffer must be between 0 and 1", result["errors"])
+        finally:
+            os.unlink(path)
+
     def test_build_report_summarizes_windows(self):
         report = build_report(
             [
@@ -298,6 +336,11 @@ class StrategyTests(unittest.TestCase):
         book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, last_trade_price=0.40)
         self.assertEqual(book.execution_price_for(0.46), 0.47)
         self.assertEqual(book.execution_price_for(0.52), 0.52)
+
+    def test_execution_price_applies_live_buffer_and_rounds_up_to_tick(self):
+        book = BestBidAsk(asset_id="yes", bid=0.45, ask=0.47, last_trade_price=0.40, tick_size=0.01)
+        self.assertEqual(book.execution_price_for(0.46, price_buffer=0.001, tick_size=0.01), 0.48)
+        self.assertEqual(book.execution_price_for(0.52, price_buffer=0.001, tick_size=0.01), 0.53)
 
     def test_effective_book_rejects_stale_quotes(self):
         app = TradingApplication.__new__(TradingApplication)

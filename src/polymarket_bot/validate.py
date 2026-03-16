@@ -46,6 +46,8 @@ def validate_config(config):
         errors.append("execution.order_type must be 'fak' or 'fok'")
     if getattr(config.execution, "fixed_order_notional", 0) <= 0:
         errors.append("execution.fixed_order_notional must be positive")
+    if getattr(config.execution, "market_order_price_buffer", 0) < 0 or getattr(config.execution, "market_order_price_buffer", 0) >= 1:
+        errors.append("execution.market_order_price_buffer must be between 0 and 1")
     if config.execution.mode == "live" and not config.wallet.private_key:
         errors.append("wallet.private_key is required for live mode")
     if config.market.market_slug and config.market.condition_id:

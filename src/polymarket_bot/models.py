@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+import math
 from typing import List, Optional
 
 
@@ -99,12 +100,30 @@ class BestBidAsk:
     def execution_price(self):
         return self.execution_price_for(self.market_price())
 
-    def execution_price_for(self, signal_price):
+    @staticmethod
+    def _round_up_to_tick(value, tick_size):
+        if tick_size is None or tick_size <= 0:
+            return value
+        steps = math.ceil((float(value) - 1e-12) / float(tick_size))
+        rounded = steps * float(tick_size)
+        return round(rounded, 10)
+
+    def execution_price_for(self, signal_price, price_buffer=0.0, tick_size=None):
         if self.ask is not None:
             if signal_price is None:
-                return self.ask
-            return max(signal_price, self.ask)
-        return signal_price
+                base_price = self.ask
+            else:
+                base_price = max(signal_price, self.ask)
+        else:
+            base_price = signal_price
+        if base_price is None:
+            return None
+        execution_price = float(base_price)
+        if price_buffer and price_buffer > 0:
+            execution_price = min(1.0, execution_price + float(price_buffer))
+            effective_tick = tick_size if tick_size is not None else self.tick_size
+            execution_price = min(1.0, self._round_up_to_tick(execution_price, effective_tick))
+        return execution_price
 
     def tradable(self, max_spread=None, min_size=0.0) -> bool:
         if not self.is_valid(max_spread=max_spread, min_size=min_size):

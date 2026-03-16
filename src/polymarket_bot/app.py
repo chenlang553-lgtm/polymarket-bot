@@ -351,7 +351,15 @@ class TradingApplication:
                 return
             selected_book = yes_book if signal.side == OutcomeSide.YES else no_book
             signal_price = snapshot.yes_price if signal.side == OutcomeSide.YES else snapshot.no_price
-            entry_price = selected_book.execution_price_for(signal_price)
+            live_price_buffer = 0.0
+            execution_tick_size = selected_book.tick_size if selected_book.tick_size is not None else self.market.tick_size
+            if self.config.execution.mode.lower() == "live":
+                live_price_buffer = getattr(self.config.execution, "market_order_price_buffer", 0.0)
+            entry_price = selected_book.execution_price_for(
+                signal_price,
+                price_buffer=live_price_buffer,
+                tick_size=execution_tick_size,
+            )
             if entry_price is None:
                 LOGGER.info(
                     "STRATEGY action=%s side=%s size=%.4f reason=missing_execution_price tau=%.1f fair_yes=%.3f fair_no=%.3f edge_yes=%s edge_no=%s",
