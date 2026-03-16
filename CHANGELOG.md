@@ -5,6 +5,12 @@
 - Added environment-variable fallback for live wallet settings so the main bot can use the same `POLYMARKET_PRIVATE_KEY`, `POLYMARKET_FUNDER`, `POLYMARKET_SIGNATURE_TYPE`, and `POLYMARKET_CHAIN_ID` flow as `trade.py`
 - Added `scripts/run_live.sh` to generate a live runtime config, stop the previous live process, and start a new live bot run from a single version argument
 
+## v1.25.3 - 2026-03-16
+
+- Added `scripts/wecom_send.py`, a Python WeCom text sender with cached access tokens
+- Added `scripts/monitor_iteration.py` to summarize the latest 5-minute order/window activity and push it to WeCom on a fixed interval
+- Added `scripts/run_monitor.sh` to stop an older monitor process and start a fresh background monitor for a given iteration
+
 ## v1.25.0 - 2026-03-16
 
 - Integrated the bot's live executor with the same authenticated market-order flow proven in `trade.py`, including automatic API-credential derivation fallback on invalid L2 creds
