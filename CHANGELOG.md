@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.25.1 - 2026-03-16
+
+- Added environment-variable fallback for live wallet settings so the main bot can use the same `POLYMARKET_PRIVATE_KEY`, `POLYMARKET_FUNDER`, `POLYMARKET_SIGNATURE_TYPE`, and `POLYMARKET_CHAIN_ID` flow as `trade.py`
+
 ## v1.25.0 - 2026-03-16
 
 - Integrated the bot's live executor with the same authenticated market-order flow proven in `trade.py`, including automatic API-credential derivation fallback on invalid L2 creds

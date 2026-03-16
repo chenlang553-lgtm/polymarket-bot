@@ -125,9 +125,13 @@ class ExecutionConfig:
 
 
 class WalletConfig:
-    def __init__(self, private_key="", funder="", signature_type=0, chain_id=137):
-        self.private_key = private_key
-        self.funder = funder
+    def __init__(self, private_key="", funder="", signature_type=None, chain_id=None):
+        self.private_key = private_key or os.getenv("POLYMARKET_PRIVATE_KEY", "")
+        self.funder = funder or os.getenv("POLYMARKET_FUNDER", "")
+        if signature_type is None:
+            signature_type = int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "2"))
+        if chain_id is None:
+            chain_id = int(os.getenv("POLYMARKET_CHAIN_ID", "137"))
         self.signature_type = signature_type
         self.chain_id = chain_id
 
@@ -246,6 +250,11 @@ def load_config(path, profile=None):
             ],
         ),
         execution=ExecutionConfig(**raw.get("execution", {})),
-        wallet=WalletConfig(**raw.get("wallet", {})),
+        wallet=WalletConfig(
+            private_key=raw.get("wallet", {}).get("private_key", ""),
+            funder=raw.get("wallet", {}).get("funder", ""),
+            signature_type=raw.get("wallet", {}).get("signature_type"),
+            chain_id=raw.get("wallet", {}).get("chain_id"),
+        ),
         logging=LoggingConfig(**raw.get("logging", {})),
     )
