@@ -335,6 +335,44 @@ class StrategyTests(unittest.TestCase):
         self.assertIsNone(chosen.ask)
         self.assertIsNone(chosen.bid)
 
+    def test_effective_book_merges_partial_latest_with_cached_book(self):
+        app = TradingApplication.__new__(TradingApplication)
+
+        class _Strategy:
+            book_fallback_max_age_seconds = 5
+
+        class _Config:
+            strategy = _Strategy()
+
+        app.config = _Config()
+
+        now = datetime(2026, 1, 1, 0, 0, 10, tzinfo=timezone.utc)
+        recent_ms = int(now.timestamp() * 1000) - 1000
+
+        app._latest_books = {
+            "yes": BestBidAsk(asset_id="yes", bid=0.44, ask=None, bid_size=5, ask_size=0, timestamp_ms=recent_ms)
+        }
+        app._last_usable_books = {
+            "yes": BestBidAsk(asset_id="yes", bid=0.43, ask=0.47, bid_size=5, ask_size=7, timestamp_ms=recent_ms)
+        }
+
+        chosen = app._effective_book("yes", now)
+        self.assertEqual(chosen.bid, 0.44)
+        self.assertEqual(chosen.ask, 0.47)
+
+    def test_cache_book_merges_partial_update_with_previous_book(self):
+        app = TradingApplication.__new__(TradingApplication)
+        app._last_usable_books = {
+            "yes": BestBidAsk(asset_id="yes", bid=0.43, ask=0.47, bid_size=5, ask_size=7, timestamp_ms=100)
+        }
+
+        partial = BestBidAsk(asset_id="yes", bid=0.44, ask=None, bid_size=6, ask_size=0, timestamp_ms=200)
+        app._maybe_cache_book("yes", partial)
+
+        cached = app._last_usable_books["yes"]
+        self.assertEqual(cached.bid, 0.44)
+        self.assertEqual(cached.ask, 0.47)
+
     def test_apply_signal_risk_controls_blocks_same_side_reentry(self):
         app = TradingApplication.__new__(TradingApplication)
 
@@ -884,6 +922,47 @@ class StrategyTests(unittest.TestCase):
         self.assertAlmostEqual(app.state.position.size, 3.0)
         self.assertEqual(app._window_entry_count, 1)
         self.assertIn(OutcomeSide.NO, app._seen_entry_sides)
+
+    def test_open_failed_clears_inflight_for_live_fak(self):
+        app = TradingApplication.__new__(TradingApplication)
+        app._order_in_flight = True
+        app._inflight_since_ms = 123
+        app._inflight_context = "open_open"
+
+        class _Execution:
+            mode = "live"
+            order_type = "FAK"
+
+        class _Config:
+            execution = _Execution()
+
+        app.config = _Config()
+
+        app._clear_inflight_if_safe("open_failed")
+
+        self.assertFalse(app._order_in_flight)
+        self.assertEqual(app._inflight_context, "")
+
+    def test_stale_live_fak_inflight_is_released(self):
+        app = TradingApplication.__new__(TradingApplication)
+        app._order_in_flight = True
+        app._inflight_since_ms = int(datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+        app._inflight_context = "open_open"
+        app._inflight_timeout_ms = 3000
+
+        class _Execution:
+            mode = "live"
+            order_type = "FAK"
+
+        class _Config:
+            execution = _Execution()
+
+        app.config = _Config()
+
+        released = app._maybe_release_stale_inflight(datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc))
+
+        self.assertTrue(released)
+        self.assertFalse(app._order_in_flight)
 
 
 if __name__ == "__main__":

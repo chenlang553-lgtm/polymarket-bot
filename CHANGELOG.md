@@ -149,6 +149,15 @@
 - Added single-window risk controls: require both outcome prices, block same-side reentry, cap entries per window, and cap flips per window
 - Relaxed edge-decay exits so the bot no longer closes and immediately reopens while the held side still has positive edge
 
+# Changelog
+
+## v1.25.7 - 2026-03-16
+
+- Made live FAK execution behave closer to paper by clearing stuck `inflight` state on rejected, partial, and timed-out orders
+- Added a stale `inflight` timeout so live trading does not block an entire window after a failed open
+- Improved book caching so partial market book updates merge with the previous usable snapshot instead of wiping the opposite side
+- Added regression tests for partial book merging and live inflight recovery
+
 ## v1.4.0 - 2026-03-13
 
 - Added `activity.jsonl` execution ledger with per-action and per-fill events

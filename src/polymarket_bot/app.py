@@ -50,6 +50,7 @@ class TradingApplication:
         self._inflight_since_ms = 0
         self._inflight_context = ""
         self._last_preopen_reconcile_ms = 0
+        self._inflight_timeout_ms = 3000
 
     async def run(self):
         self._startup_check()
@@ -174,6 +175,33 @@ class TradingApplication:
         self._inflight_since_ms = 0
         self._inflight_context = ""
 
+    def _uses_ephemeral_live_orders(self):
+        return (
+            self.config.execution.mode.lower() == "live"
+            and str(self.config.execution.order_type).upper() == "FAK"
+        )
+
+    def _clear_inflight_if_safe(self, reason):
+        if not self._order_in_flight:
+            return
+        if self._uses_ephemeral_live_orders():
+            LOGGER.warning("EXECUTION inflight_cleared context=%s reason=%s", self._inflight_context, reason)
+            self._clear_inflight()
+
+    def _maybe_release_stale_inflight(self, now):
+        if not self._order_in_flight or not self._uses_ephemeral_live_orders():
+            return False
+        now_ms = int(now.timestamp() * 1000)
+        if now_ms - self._inflight_since_ms < self._inflight_timeout_ms:
+            return False
+        LOGGER.warning(
+            "EXECUTION inflight_timeout_clear context=%s age_ms=%s",
+            self._inflight_context,
+            now_ms - self._inflight_since_ms,
+        )
+        self._clear_inflight()
+        return True
+
     def _reconcile_inflight(self):
         reconcile = getattr(self.executor, "reconcile_position", None)
         if not callable(reconcile):
@@ -238,9 +266,11 @@ class TradingApplication:
             self._log_waiting(now)
             return
 
-        if self._order_in_flight and not self._reconcile_inflight():
-            LOGGER.warning("EXECUTION blocked_inflight context=%s", self._inflight_context)
-            return
+        if self._order_in_flight:
+            if not self._reconcile_inflight():
+                if not self._maybe_release_stale_inflight(now):
+                    LOGGER.warning("EXECUTION blocked_inflight context=%s", self._inflight_context)
+                    return
 
         yes_book = self._effective_book(self.market.yes_token_id, now)
         no_book = self._effective_book(self.market.no_token_id, now)
@@ -268,6 +298,7 @@ class TradingApplication:
             try:
                 self.executor.close_position(self.market, self.state.position)
             except Exception as exc:
+                self._clear_inflight_if_safe("close_failed")
                 LOGGER.error("EXECUTION close_failed action=%s side=%s size=%.4f error=%s", signal.action.value, self.state.position.side.value, self.state.position.size, exc)
                 return
 
@@ -275,6 +306,7 @@ class TradingApplication:
             requested = max(0.0, float(report.get("requested_size", self.state.position.size)))
             filled = max(0.0, float(report.get("filled_size", 0.0)))
             if not report.get("success", False):
+                self._clear_inflight_if_safe("close_unsuccessful")
                 LOGGER.error("EXECUTION close_unsuccessful status=%s error=%s", report.get("status"), report.get("error"))
                 return
 
@@ -299,9 +331,11 @@ class TradingApplication:
             elif filled > 0:
                 self.state.position.size = max(0.0, self.state.position.size - filled)
                 self._window_stats.mark_position(self.state.position.side, self.state.position.size)
+                self._clear_inflight_if_safe("close_partial")
                 LOGGER.warning("EXECUTION partial_close requested=%.4f filled=%.4f remaining=%.4f", requested, filled, self.state.position.size)
                 return
             else:
+                self._clear_inflight_if_safe("close_unfilled")
                 LOGGER.warning("EXECUTION close_submitted_unfilled status=%s", report.get("status"))
                 return
 
@@ -336,6 +370,7 @@ class TradingApplication:
             try:
                 candidate_position = self.executor.open_position(self.market, signal, entry_price)
             except Exception as exc:
+                self._clear_inflight_if_safe("open_failed")
                 LOGGER.error("EXECUTION open_failed action=%s side=%s size=%.4f error=%s", signal.action.value, signal.side.value, signal.size, exc)
                 return
 
@@ -343,11 +378,13 @@ class TradingApplication:
             requested = max(0.0, float(report.get("requested_size", signal.size)))
             filled = max(0.0, float(report.get("filled_size", 0.0)))
             if not report.get("success", False) or filled <= 0.0:
+                self._clear_inflight_if_safe("open_unconfirmed")
                 LOGGER.warning("EXECUTION open_unconfirmed status=%s error=%s", report.get("status"), report.get("error"))
                 return
 
             if filled < requested:
                 candidate_position.size = filled
+                self._clear_inflight_if_safe("open_partial")
                 LOGGER.warning("EXECUTION partial_open requested=%.4f filled=%.4f", requested, filled)
             self.state.position = candidate_position
             self._window_entry_count = getattr(self, "_window_entry_count", 0) + 1
@@ -690,7 +727,16 @@ class TradingApplication:
             and book.last_trade_price is None
         ):
             return
-        self._last_usable_books[asset_id] = book
+        previous = self._last_usable_books.get(asset_id)
+        self._last_usable_books[asset_id] = book.merged_with(previous) if previous is not None else book
+
+    @staticmethod
+    def _is_recent_book(book, reference_ms, max_age_ms):
+        if book is None:
+            return False
+        if not book.timestamp_ms:
+            return True
+        return (reference_ms - book.timestamp_ms) <= max_age_ms
 
     def _effective_book(self, asset_id, now):
         latest_book = self._latest_books.get(asset_id)
@@ -701,19 +747,16 @@ class TradingApplication:
         reference_ms = int(now.timestamp() * 1000)
         max_age_ms = int(self.config.strategy.book_fallback_max_age_seconds * 1000)
 
-        if latest_book is not None:
-            if latest_book.timestamp_ms:
-                if (reference_ms - latest_book.timestamp_ms) <= max_age_ms:
-                    return latest_book
-            else:
-                return latest_book
+        latest_recent = self._is_recent_book(latest_book, reference_ms, max_age_ms)
+        fallback_recent = self._is_recent_book(fallback_book, reference_ms, max_age_ms)
 
-        if fallback_book is not None:
-            if fallback_book.timestamp_ms:
-                if (reference_ms - fallback_book.timestamp_ms) <= max_age_ms:
-                    return fallback_book
-            else:
-                return fallback_book
+        if latest_recent:
+            if fallback_recent and fallback_book is not None and fallback_book is not latest_book:
+                return latest_book.merged_with(fallback_book)
+            return latest_book
+
+        if fallback_recent:
+            return fallback_book
 
         return BestBidAsk(asset_id=asset_id, bid=None, ask=None)
 
