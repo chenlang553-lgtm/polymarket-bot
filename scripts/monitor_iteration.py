@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import time
@@ -21,6 +22,7 @@ from wecom_send import DEFAULT_CONFIG_PATH, get_access_token, load_config, send_
 PROJECT_ROOT = Path("/root/polymarket_bot")
 TZ = datetime.now().astimezone().tzinfo or timezone.utc
 USDC_HOST = "https://clob.polymarket.com"
+LOGGER = logging.getLogger(__name__)
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -42,9 +44,11 @@ def _fmt_money(value: float) -> str:
     return f"{value:+.4f}"
 
 
-def _fmt_balance(value: float | None) -> str:
+def _fmt_balance(value: float | str | None) -> str:
     if value is None:
         return "-"
+    if isinstance(value, str):
+        return value
     return f"{value:.4f}"
 
 
@@ -120,6 +124,50 @@ def _extract_number(payload, keys: tuple[str, ...]) -> float | None:
     return None
 
 
+def _to_float(value) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _scale_six_decimals(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return float(value) / 1_000_000.0
+
+
+def _extract_collateral_balance(payload) -> float | None:
+    if not isinstance(payload, dict):
+        return None
+    return _scale_six_decimals(_to_float(payload.get("balance")))
+
+
+def _extract_conditional_balance(payload) -> float | None:
+    if not isinstance(payload, dict):
+        return None
+    return _scale_six_decimals(_to_float(payload.get("balance")))
+
+
+def _extract_allowance_label(payload) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    allowances = payload.get("allowances")
+    if not isinstance(allowances, dict):
+        return None
+    values = [_to_float(value) for value in allowances.values()]
+    values = [value for value in values if value is not None]
+    if not values:
+        return None
+    return "set" if max(values) > 0 else "none"
+
+
 def _build_live_client():
     private_key = str(os.getenv("POLYMARKET_PRIVATE_KEY", "")).strip()
     if not private_key:
@@ -149,40 +197,74 @@ def _build_live_client():
     return client
 
 
+def _is_invalid_api_key_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "invalid api key" in message or "unauthorized" in message
+
+
+def _call_with_auth_retry(client, call, *, can_derive: bool):
+    try:
+        return call()
+    except Exception as exc:
+        if can_derive and _is_invalid_api_key_error(exc):
+            LOGGER.warning("monitor balance auth retry due to invalid api key")
+            client.set_api_creds(client.create_or_derive_api_creds())
+            return call()
+        raise
+
+
 def _fetch_account_snapshot(latest_state: dict | None) -> dict:
     result = {
         "usdc_balance": None,
         "usdc_allowance": None,
         "yes_balance": None,
         "no_balance": None,
+        "balance_error": None,
     }
     try:
         client = _build_live_client()
         if client is None:
+            result["balance_error"] = "missing_private_key"
             return result
 
         from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
 
-        collateral = client.get_balance_allowance(
-            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        can_derive = bool(str(os.getenv("POLYMARKET_PRIVATE_KEY", "")).strip())
+
+        collateral = _call_with_auth_retry(
+            client,
+            lambda: client.get_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            ),
+            can_derive=can_derive,
         )
-        result["usdc_balance"] = _extract_number(collateral, ("balance", "available", "amount", "size"))
-        result["usdc_allowance"] = _extract_number(collateral, ("allowance", "allowed", "approved"))
+        result["usdc_balance"] = _extract_collateral_balance(collateral)
+        result["usdc_allowance"] = _extract_allowance_label(collateral)
 
         market_slug = None if latest_state is None else latest_state.get("marketSlug")
         if not market_slug:
             return result
 
         market = resolve_market(MarketConfig(market_slug=market_slug))
-        yes_payload = client.get_balance_allowance(
-            BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=market.yes_token_id)
+        yes_payload = _call_with_auth_retry(
+            client,
+            lambda: client.get_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=market.yes_token_id)
+            ),
+            can_derive=can_derive,
         )
-        no_payload = client.get_balance_allowance(
-            BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=market.no_token_id)
+        no_payload = _call_with_auth_retry(
+            client,
+            lambda: client.get_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=market.no_token_id)
+            ),
+            can_derive=can_derive,
         )
-        result["yes_balance"] = _extract_number(yes_payload, ("balance", "available", "amount", "size"))
-        result["no_balance"] = _extract_number(no_payload, ("balance", "available", "amount", "size"))
-    except Exception:
+        result["yes_balance"] = _extract_conditional_balance(yes_payload)
+        result["no_balance"] = _extract_conditional_balance(no_payload)
+    except Exception as exc:
+        result["balance_error"] = str(exc)
+        LOGGER.exception("monitor balance lookup failed: %s", exc)
         return result
     return result
 
@@ -277,6 +359,9 @@ def _summarize(iteration: str, data_dir: Path) -> str:
         ),
     ]
 
+    if account.get("balance_error"):
+        lines.append(f"余额查询异常: {account['balance_error']}")
+
     if latest_traded is not None:
         lines.append(
             "最新交易窗: {slug} pnl={pnl} winner={winner} fills={fills}".format(
@@ -323,6 +408,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     config = load_config(args.config)
     data_dir = PROJECT_ROOT / "data" / args.iteration
     interval = int(args.interval or config.get("monitor", {}).get("interval_seconds", 300))

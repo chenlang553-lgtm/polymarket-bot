@@ -191,6 +191,13 @@
 - Added support for `best_bid_ask` and `price_change` market-channel events to preserve prices when full `book` updates are sparse
 - Added regression tests for `best_bid_ask` and `price_change` parsing
 
+## v1.25.14 - 2026-03-17
+
+- Fixed monitor balance lookup by retrying with freshly derived Polymarket API creds when stored L2 creds return `401 Invalid api key`
+- Corrected monitor balance parsing for collateral and conditional token balances
+- Improved monitor output to show `allowance=set/none` instead of a bogus numeric value
+- Added monitor balance error logging so failures no longer silently degrade to `-`
+
 ## v1.4.0 - 2026-03-13
 
 - Added `activity.jsonl` execution ledger with per-action and per-fill events
