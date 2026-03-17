@@ -191,6 +191,10 @@
 - Added support for `best_bid_ask` and `price_change` market-channel events to preserve prices when full `book` updates are sparse
 - Added regression tests for `best_bid_ask` and `price_change` parsing
 
+## v1.25.17 - 2026-03-17
+
+- Lowered the live `execution.market_order_price_buffer` from `0.05` to `0.01` to reduce worst-price slippage while keeping FAK retry behavior
+
 ## v1.25.16 - 2026-03-17
 
 - Switched monitor holdings from current-window token balances to official full-account positions via `data-api.polymarket.com/positions`

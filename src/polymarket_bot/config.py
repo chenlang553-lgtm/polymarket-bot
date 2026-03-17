@@ -115,7 +115,7 @@ class ExecutionConfig:
         strategy_profile="main",
         strategy_type="fair_probability",
         fixed_order_notional=1.0,
-        market_order_price_buffer=0.05,
+        market_order_price_buffer=0.01,
     ):
         self.mode = mode
         self.order_type = order_type
