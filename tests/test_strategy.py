@@ -473,9 +473,12 @@ class StrategyTests(unittest.TestCase):
             allow_same_side_reentry = False
 
         class _Config:
+            execution = type("Exec", (), {"mode": "paper"})()
             strategy = _Strategy()
 
         app.config = _Config()
+        app.market = type("Market", (), {"slug": "m"})()
+        app._startup_skip_window_slug = None
         app._window_entry_count = 1
         app._window_flip_count = 0
         app._seen_entry_sides = {OutcomeSide.YES}
@@ -504,6 +507,51 @@ class StrategyTests(unittest.TestCase):
 
         self.assertEqual(blocked.action, SignalAction.HOLD)
         self.assertEqual(blocked.reason, "same_side_reentry_blocked")
+
+    def test_apply_signal_risk_controls_blocks_live_open_in_startup_window(self):
+        app = TradingApplication.__new__(TradingApplication)
+
+        class _Strategy:
+            require_both_prices = True
+            max_entries_per_window = 2
+            max_flips_per_window = 1
+            allow_same_side_reentry = False
+
+        class _Config:
+            execution = type("Exec", (), {"mode": "live"})()
+            strategy = _Strategy()
+
+        app.config = _Config()
+        app.market = type("Market", (), {"slug": "startup-window"})()
+        app._startup_skip_window_slug = "startup-window"
+        app._window_entry_count = 0
+        app._window_flip_count = 0
+        app._seen_entry_sides = set()
+        snapshot = StrategySnapshot(
+            fair_yes=0.7,
+            fair_no=0.3,
+            yes_price=0.45,
+            no_price=0.55,
+            edge_yes=0.25,
+            edge_no=-0.25,
+            sigma_10=0.0,
+            sigma_30=0.0,
+            sigma_slow=0.0,
+            sigma_eff=0.0,
+            momentum_5=0.0,
+            momentum_15=0.0,
+            drift=0.0,
+            x_t=0.0,
+            tau_seconds=20,
+            jump_adjusted=False,
+            outlier_adjusted=False,
+        )
+        signal = TradeSignal(SignalAction.OPEN, side=OutcomeSide.YES, size=0.5, reason="open_edge_signal", snapshot=snapshot)
+
+        blocked = app._apply_signal_risk_controls(signal)
+
+        self.assertEqual(blocked.action, SignalAction.HOLD)
+        self.assertEqual(blocked.reason, "startup_window_skip")
 
     def test_live_close_position_posts_sell_order(self):
         from polymarket_bot.execution import LiveExecutor

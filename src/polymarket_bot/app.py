@@ -52,6 +52,7 @@ class TradingApplication:
         self._last_preopen_reconcile_ms = 0
         self._inflight_timeout_ms = 3000
         self._live_open_failures = {}
+        self._startup_skip_window_slug = self.market.slug if self.config.execution.mode.lower() == "live" else None
 
     async def run(self):
         self._startup_check()
@@ -99,6 +100,8 @@ class TradingApplication:
             self.config.strategy.decision_window_start_seconds,
             self.config.strategy.decision_window_end_seconds,
         )
+        if self._startup_skip_window_slug:
+            LOGGER.warning("STARTUP_CHECK startup_window_skip=%s", self._startup_skip_window_slug)
 
     async def _consume_prices(self):
         await self._queue.put(("price_stream_event", {"event": "connect"}))
@@ -482,6 +485,14 @@ class TradingApplication:
         ):
             return TradeSignal(SignalAction.HOLD, reason="incomplete_market_prices", snapshot=snapshot)
 
+        if (
+            signal.action in {SignalAction.OPEN, SignalAction.FLIP}
+            and getattr(self.config.execution, "mode", "paper").lower() == "live"
+            and getattr(self, "_startup_skip_window_slug", None)
+            and getattr(self.market, "slug", None) == self._startup_skip_window_slug
+        ):
+            return TradeSignal(SignalAction.HOLD, reason="startup_window_skip", snapshot=snapshot)
+
         if signal.action == SignalAction.OPEN:
             if getattr(self, "_window_entry_count", 0) >= getattr(self.config.strategy, "max_entries_per_window", 999999):
                 return TradeSignal(SignalAction.HOLD, reason="entry_limit_reached", snapshot=snapshot)
@@ -603,6 +614,8 @@ class TradingApplication:
         self._window_flip_count = 0
         self._seen_entry_sides = set()
         self._clear_live_open_failures()
+        if getattr(self, "_startup_skip_window_slug", None) and market.slug != self._startup_skip_window_slug:
+            self._startup_skip_window_slug = None
         self.market = market
         self.state.market = market
         self.state.last_snapshot = None

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.25.20 - 2026-03-17
+
+- Added a live startup guard that skips new opens/flips for the current window after a restart
+- Trading resumes automatically on the next market window after rollover
+- Added regression coverage so startup-window blocking does not affect later windows
+
 ## v1.25.19 - 2026-03-17
 
 - Added live market-order price-buffer laddering so failed FAK opens retry with progressively more aggressive buffers
