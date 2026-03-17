@@ -191,6 +191,12 @@
 - Added support for `best_bid_ask` and `price_change` market-channel events to preserve prices when full `book` updates are sparse
 - Added regression tests for `best_bid_ask` and `price_change` parsing
 
+## v1.25.16 - 2026-03-17
+
+- Switched monitor holdings from current-window token balances to official full-account positions via `data-api.polymarket.com/positions`
+- Added official total position value via `data-api.polymarket.com/value`
+- Monitor now reports `USDC balance + holdings value = total equity` and includes a compact top-holdings summary
+
 ## v1.25.15 - 2026-03-17
 
 - Updated monitor summaries to report `USDC balance + position market value = total equity`

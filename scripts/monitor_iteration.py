@@ -7,14 +7,13 @@ import logging
 import os
 import sys
 import time
+import urllib.parse
+import urllib.request
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path("/root/polymarket_bot/src")))
-
-from polymarket_bot.config import MarketConfig
-from polymarket_bot.gamma import resolve_market
 
 from wecom_send import DEFAULT_CONFIG_PATH, get_access_token, load_config, send_text
 
@@ -22,6 +21,11 @@ from wecom_send import DEFAULT_CONFIG_PATH, get_access_token, load_config, send_
 PROJECT_ROOT = Path("/root/polymarket_bot")
 TZ = datetime.now().astimezone().tzinfo or timezone.utc
 USDC_HOST = "https://clob.polymarket.com"
+DATA_API_HOST = "https://data-api.polymarket.com"
+DATA_API_HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+}
 LOGGER = logging.getLogger(__name__)
 
 
@@ -50,6 +54,22 @@ def _fmt_balance(value: float | str | None) -> str:
     if isinstance(value, str):
         return value
     return f"{value:.4f}"
+
+
+def _fmt_position_summary(positions: list[dict] | None) -> str:
+    if not positions:
+        return "-"
+    parts: list[str] = []
+    for row in positions[:3]:
+        slug = str(row.get("slug") or row.get("eventSlug") or "-")
+        outcome = str(row.get("outcome") or "-")
+        size = _to_float(row.get("size")) or 0.0
+        current_value = _to_float(row.get("currentValue")) or 0.0
+        parts.append(f"{slug}:{outcome} x{size:.2f} v={current_value:.4f}")
+    extra = len(positions) - len(parts)
+    if extra > 0:
+        parts.append(f"+{extra} more")
+    return " | ".join(parts)
 
 
 def _fmt_time(ms: int | None) -> str:
@@ -197,6 +217,20 @@ def _build_live_client():
     return client
 
 
+def _account_profile_address() -> str | None:
+    funder = str(os.getenv("POLYMARKET_FUNDER", "")).strip()
+    if funder:
+        return funder
+    private_key = str(os.getenv("POLYMARKET_PRIVATE_KEY", "")).strip()
+    if not private_key:
+        return None
+    try:
+        from eth_account import Account
+        return str(Account.from_key(private_key).address)
+    except Exception:
+        return None
+
+
 def _is_invalid_api_key_error(exc: Exception) -> bool:
     message = str(exc).lower()
     return "invalid api key" in message or "unauthorized" in message
@@ -213,12 +247,47 @@ def _call_with_auth_retry(client, call, *, can_derive: bool):
         raise
 
 
+def _get_json(url: str):
+    request = urllib.request.Request(url, headers=DATA_API_HEADERS)
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _fetch_positions_value(address: str | None) -> tuple[float | None, list[dict], str | None]:
+    if not address:
+        return None, [], "missing_profile_address"
+    try:
+        value_url = f"{DATA_API_HOST}/value?" + urllib.parse.urlencode({"user": address})
+        value_payload = _get_json(value_url)
+        total_value = None
+        if isinstance(value_payload, list) and value_payload:
+            total_value = _to_float((value_payload[0] or {}).get("value"))
+
+        positions_url = f"{DATA_API_HOST}/positions?" + urllib.parse.urlencode({"user": address, "sizeThreshold": 0})
+        positions_payload = _get_json(positions_url)
+        positions: list[dict] = []
+        if isinstance(positions_payload, list):
+            for row in positions_payload:
+                if not isinstance(row, dict):
+                    continue
+                size = _to_float(row.get("size")) or 0.0
+                current_value = _to_float(row.get("currentValue")) or 0.0
+                if size <= 0 and current_value <= 0:
+                    continue
+                positions.append(row)
+        positions.sort(key=lambda row: _to_float(row.get("currentValue")) or 0.0, reverse=True)
+        return total_value, positions, None
+    except Exception as exc:
+        return None, [], str(exc)
+
+
 def _fetch_account_snapshot(latest_state: dict | None) -> dict:
     result = {
         "usdc_balance": None,
         "usdc_allowance": None,
-        "yes_balance": None,
-        "no_balance": None,
+        "positions_value": None,
+        "positions_count": 0,
+        "positions_summary": None,
         "asset_value": None,
         "total_equity": None,
         "balance_error": None,
@@ -242,38 +311,16 @@ def _fetch_account_snapshot(latest_state: dict | None) -> dict:
         )
         result["usdc_balance"] = _extract_collateral_balance(collateral)
         result["usdc_allowance"] = _extract_allowance_label(collateral)
-
-        market_slug = None if latest_state is None else latest_state.get("marketSlug")
-        if not market_slug:
-            return result
-
-        market = resolve_market(MarketConfig(market_slug=market_slug))
-        yes_payload = _call_with_auth_retry(
-            client,
-            lambda: client.get_balance_allowance(
-                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=market.yes_token_id)
-            ),
-            can_derive=can_derive,
-        )
-        no_payload = _call_with_auth_retry(
-            client,
-            lambda: client.get_balance_allowance(
-                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=market.no_token_id)
-            ),
-            can_derive=can_derive,
-        )
-        result["yes_balance"] = _extract_conditional_balance(yes_payload)
-        result["no_balance"] = _extract_conditional_balance(no_payload)
-        yes_price = _to_float(None if latest_state is None else latest_state.get("yesPrice"))
-        no_price = _to_float(None if latest_state is None else latest_state.get("noPrice"))
-        asset_value = None
-        if result["yes_balance"] is not None and yes_price is not None:
-            asset_value = (asset_value or 0.0) + (result["yes_balance"] * yes_price)
-        if result["no_balance"] is not None and no_price is not None:
-            asset_value = (asset_value or 0.0) + (result["no_balance"] * no_price)
-        result["asset_value"] = asset_value
-        if result["usdc_balance"] is not None and asset_value is not None:
-            result["total_equity"] = result["usdc_balance"] + asset_value
+        profile_address = _account_profile_address()
+        positions_value, positions, positions_error = _fetch_positions_value(profile_address)
+        if positions_error:
+            result["balance_error"] = positions_error
+        result["positions_value"] = positions_value
+        result["asset_value"] = positions_value
+        result["positions_count"] = len(positions)
+        result["positions_summary"] = _fmt_position_summary(positions)
+        if result["usdc_balance"] is not None and positions_value is not None:
+            result["total_equity"] = result["usdc_balance"] + positions_value
     except Exception as exc:
         result["balance_error"] = str(exc)
         LOGGER.exception("monitor balance lookup failed: %s", exc)
@@ -369,9 +416,9 @@ def _summarize(iteration: str, data_dir: Path) -> str:
             total_equity=_fmt_balance(account.get("total_equity")),
             allowance=_fmt_balance(account.get("usdc_allowance")),
         ),
-        "持仓数量: Up={up} Down={down}".format(
-            up=_fmt_balance(account.get("yes_balance")),
-            down=_fmt_balance(account.get("no_balance")),
+        "当前持仓: count={count} {summary}".format(
+            count=account.get("positions_count", 0),
+            summary=account.get("positions_summary") or "-",
         ),
     ]
 
