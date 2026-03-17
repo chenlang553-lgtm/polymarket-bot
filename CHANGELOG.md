@@ -191,6 +191,11 @@
 - Added support for `best_bid_ask` and `price_change` market-channel events to preserve prices when full `book` updates are sparse
 - Added regression tests for `best_bid_ask` and `price_change` parsing
 
+## v1.25.18 - 2026-03-17
+
+- Added a local dashboard page for browsing iteration summaries, recent fills, recent window closes, and latest state by version
+- Added `scripts/run_dashboard.sh` to restart the dashboard cleanly and serve it on a configurable port
+
 ## v1.25.17 - 2026-03-17
 
 - Lowered the live `execution.market_order_price_buffer` from `0.05` to `0.01` to reduce worst-price slippage while keeping FAK retry behavior
