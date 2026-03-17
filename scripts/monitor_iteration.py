@@ -219,6 +219,8 @@ def _fetch_account_snapshot(latest_state: dict | None) -> dict:
         "usdc_allowance": None,
         "yes_balance": None,
         "no_balance": None,
+        "asset_value": None,
+        "total_equity": None,
         "balance_error": None,
     }
     try:
@@ -262,6 +264,16 @@ def _fetch_account_snapshot(latest_state: dict | None) -> dict:
         )
         result["yes_balance"] = _extract_conditional_balance(yes_payload)
         result["no_balance"] = _extract_conditional_balance(no_payload)
+        yes_price = _to_float(None if latest_state is None else latest_state.get("yesPrice"))
+        no_price = _to_float(None if latest_state is None else latest_state.get("noPrice"))
+        asset_value = None
+        if result["yes_balance"] is not None and yes_price is not None:
+            asset_value = (asset_value or 0.0) + (result["yes_balance"] * yes_price)
+        if result["no_balance"] is not None and no_price is not None:
+            asset_value = (asset_value or 0.0) + (result["no_balance"] * no_price)
+        result["asset_value"] = asset_value
+        if result["usdc_balance"] is not None and asset_value is not None:
+            result["total_equity"] = result["usdc_balance"] + asset_value
     except Exception as exc:
         result["balance_error"] = str(exc)
         LOGGER.exception("monitor balance lookup failed: %s", exc)
@@ -351,9 +363,13 @@ def _summarize(iteration: str, data_dir: Path) -> str:
             up=side_counter.get("Up", 0),
             down=side_counter.get("Down", 0),
         ),
-        "账户余额: usdc={usdc} allowance={allowance} | 当前资产: Up={up} Down={down}".format(
+        "账户: usdc={usdc} 持仓市值={asset_value} 总资产={total_equity} allowance={allowance}".format(
             usdc=_fmt_balance(account.get("usdc_balance")),
+            asset_value=_fmt_balance(account.get("asset_value")),
+            total_equity=_fmt_balance(account.get("total_equity")),
             allowance=_fmt_balance(account.get("usdc_allowance")),
+        ),
+        "持仓数量: Up={up} Down={down}".format(
             up=_fmt_balance(account.get("yes_balance")),
             down=_fmt_balance(account.get("no_balance")),
         ),

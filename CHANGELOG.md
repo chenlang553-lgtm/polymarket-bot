@@ -191,6 +191,11 @@
 - Added support for `best_bid_ask` and `price_change` market-channel events to preserve prices when full `book` updates are sparse
 - Added regression tests for `best_bid_ask` and `price_change` parsing
 
+## v1.25.15 - 2026-03-17
+
+- Updated monitor summaries to report `USDC balance + position market value = total equity`
+- Kept `Up/Down` conditional token quantities as separate position-quantity fields
+
 ## v1.25.14 - 2026-03-17
 
 - Fixed monitor balance lookup by retrying with freshly derived Polymarket API creds when stored L2 creds return `401 Invalid api key`
