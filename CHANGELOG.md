@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.25.13 - 2026-03-17
+
+- Updated `scripts/run_monitor.sh` to stop all older `monitor_iteration.py` processes and clear stale monitor pid files before starting a new monitor
+
 ## v1.25.12 - 2026-03-17
 
 - Reworked the WeCom monitor to report full-day summaries for yesterday and today instead of incremental 5-minute deltas

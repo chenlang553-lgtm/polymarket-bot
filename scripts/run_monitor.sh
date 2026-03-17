@@ -15,7 +15,7 @@ RUNTIME_DIR="${PROJECT_ROOT}/.runtime"
 LOGS_DIR="${PROJECT_ROOT}/logs/${ITERATION}"
 LOG_PATH="${LOGS_DIR}/monitor.log"
 PID_FILE="${RUNTIME_DIR}/monitor_${ITERATION}.pid"
-RUN_PATTERN="monitor_iteration.py ${ITERATION}"
+RUN_PATTERN="${SCRIPT_PATH}"
 
 mkdir -p "${RUNTIME_DIR}" "${LOGS_DIR}"
 
@@ -24,15 +24,15 @@ if [[ ! -f "${CONFIG_PATH}" ]]; then
   exit 1
 fi
 
-if [[ -f "${PID_FILE}" ]]; then
-  OLD_PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
+for stale_pid_file in "${RUNTIME_DIR}"/monitor_*.pid; do
+  [[ -e "${stale_pid_file}" ]] || continue
+  OLD_PID="$(cat "${stale_pid_file}" 2>/dev/null || true)"
   if [[ -n "${OLD_PID}" ]] && kill -0 "${OLD_PID}" >/dev/null 2>&1; then
     echo "stopping previous monitor pid=${OLD_PID}"
     kill "${OLD_PID}" >/dev/null 2>&1 || true
-    sleep 1
   fi
-  rm -f "${PID_FILE}"
-fi
+  rm -f "${stale_pid_file}"
+done
 
 EXISTING_PIDS="$(pgrep -f "${RUN_PATTERN}" || true)"
 if [[ -n "${EXISTING_PIDS}" ]]; then
