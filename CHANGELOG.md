@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.25.19 - 2026-03-17
+
+- Added live market-order price-buffer laddering so failed FAK opens retry with progressively more aggressive buffers
+- Added `execution.market_order_price_buffer_step` and `execution.market_order_price_buffer_max`
+- Reset per-side live open failure state on successful fills and on market rollover
+- Added validation and regression coverage for the live buffer ladder
+
 ## v1.25.13 - 2026-03-17
 
 - Updated `scripts/run_monitor.sh` to stop all older `monitor_iteration.py` processes and clear stale monitor pid files before starting a new monitor

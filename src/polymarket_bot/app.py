@@ -51,6 +51,7 @@ class TradingApplication:
         self._inflight_context = ""
         self._last_preopen_reconcile_ms = 0
         self._inflight_timeout_ms = 3000
+        self._live_open_failures = {}
 
     async def run(self):
         self._startup_check()
@@ -251,6 +252,28 @@ class TradingApplication:
         )
         return True
 
+    def _live_price_buffer_for(self, side):
+        base = float(getattr(self.config.execution, "market_order_price_buffer", 0.0) or 0.0)
+        step = float(getattr(self.config.execution, "market_order_price_buffer_step", 0.0) or 0.0)
+        cap = float(getattr(self.config.execution, "market_order_price_buffer_max", base) or base)
+        failures = int(getattr(self, "_live_open_failures", {}).get(side, 0))
+        return min(cap, base + failures * step)
+
+    def _record_live_open_failure(self, side):
+        if self.config.execution.mode.lower() != "live":
+            return
+        if not hasattr(self, "_live_open_failures"):
+            self._live_open_failures = {}
+        self._live_open_failures[side] = int(self._live_open_failures.get(side, 0)) + 1
+
+    def _clear_live_open_failures(self, side=None):
+        if not hasattr(self, "_live_open_failures"):
+            self._live_open_failures = {}
+        if side is None:
+            self._live_open_failures = {}
+            return
+        self._live_open_failures.pop(side, None)
+
     def _tick(self):
         if self.market.start_time is None or self.market.end_time is None:
             raise RuntimeError("market end_time is required for live strategy timing")
@@ -354,7 +377,7 @@ class TradingApplication:
             live_price_buffer = 0.0
             execution_tick_size = selected_book.tick_size if selected_book.tick_size is not None else self.market.tick_size
             if self.config.execution.mode.lower() == "live":
-                live_price_buffer = getattr(self.config.execution, "market_order_price_buffer", 0.0)
+                live_price_buffer = self._live_price_buffer_for(signal.side)
             entry_price = selected_book.execution_price_for(
                 signal_price,
                 price_buffer=live_price_buffer,
@@ -379,22 +402,38 @@ class TradingApplication:
             try:
                 candidate_position = self.executor.open_position(self.market, signal, entry_price)
             except Exception as exc:
+                self._record_live_open_failure(signal.side)
                 self._clear_inflight_if_safe("open_failed")
-                LOGGER.error("EXECUTION open_failed action=%s side=%s size=%.4f error=%s", signal.action.value, signal.side.value, signal.size, exc)
+                LOGGER.error(
+                    "EXECUTION open_failed action=%s side=%s size=%.4f buffer=%.4f error=%s",
+                    signal.action.value,
+                    signal.side.value,
+                    signal.size,
+                    live_price_buffer,
+                    exc,
+                )
                 return
 
             report = self._execution_report()
             requested = max(0.0, float(report.get("requested_size", signal.size)))
             filled = max(0.0, float(report.get("filled_size", 0.0)))
             if not report.get("success", False) or filled <= 0.0:
+                self._record_live_open_failure(signal.side)
                 self._clear_inflight_if_safe("open_unconfirmed")
-                LOGGER.warning("EXECUTION open_unconfirmed status=%s error=%s", report.get("status"), report.get("error"))
+                LOGGER.warning(
+                    "EXECUTION open_unconfirmed side=%s buffer=%.4f status=%s error=%s",
+                    signal.side.value,
+                    live_price_buffer,
+                    report.get("status"),
+                    report.get("error"),
+                )
                 return
 
             if filled < requested:
                 candidate_position.size = filled
                 self._clear_inflight_if_safe("open_partial")
                 LOGGER.warning("EXECUTION partial_open requested=%.4f filled=%.4f", requested, filled)
+            self._clear_live_open_failures(signal.side)
             self.state.position = candidate_position
             self._window_entry_count = getattr(self, "_window_entry_count", 0) + 1
             if not hasattr(self, "_seen_entry_sides"):
@@ -563,6 +602,7 @@ class TradingApplication:
         self._window_entry_count = 0
         self._window_flip_count = 0
         self._seen_entry_sides = set()
+        self._clear_live_open_failures()
         self.market = market
         self.state.market = market
         self.state.last_snapshot = None

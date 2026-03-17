@@ -158,6 +158,53 @@ class StrategyTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_validate_rejects_invalid_market_order_price_buffer_ladder(self):
+        handle, path = tempfile.mkstemp()
+        os.close(handle)
+        try:
+            with open(path, "w") as saved:
+                saved.write(
+                    json.dumps(
+                        {
+                            "market": {"slug_prefix": "btc-updown-5m"},
+                            "price_feed": {"symbol": "btcusdt", "provider": "binance"},
+                            "strategy": {
+                                "decision_window_start_seconds": 45,
+                                "decision_window_end_seconds": 8,
+                                "min_edge": 0.04,
+                                "max_spread": 0.03,
+                                "min_top_of_book_size": 1
+                            },
+                            "execution": {
+                                "mode": "paper",
+                                "market_order_price_buffer": 0.02,
+                                "market_order_price_buffer_step": -0.01,
+                                "market_order_price_buffer_max": 0.01
+                            },
+                            "wallet": {},
+                            "logging": {
+                                "window_close_path": "window_close.jsonl",
+                                "activity_path": "activity.jsonl",
+                                "market_state_path": "market_state.jsonl",
+                                "health_log_interval_seconds": 15,
+                                "stale_data_threshold_seconds": 10,
+                                "shutdown_grace_seconds": 5,
+                                "supervisor_restart_backoff_seconds": 2
+                            }
+                        }
+                    )
+                )
+            config = load_config(path)
+            result = validate_config(config)
+            self.assertTrue(result["errors"])
+            self.assertIn("execution.market_order_price_buffer_step must be between 0 and 1", result["errors"])
+            self.assertIn(
+                "execution.market_order_price_buffer_max must be greater than or equal to execution.market_order_price_buffer",
+                result["errors"],
+            )
+        finally:
+            os.unlink(path)
+
     def test_build_report_summarizes_windows(self):
         report = build_report(
             [
@@ -1042,6 +1089,149 @@ class StrategyTests(unittest.TestCase):
 
         self.assertTrue(released)
         self.assertFalse(app._order_in_flight)
+
+    def test_live_open_buffer_ladders_after_failed_attempts(self):
+        app = TradingApplication.__new__(TradingApplication)
+
+        now = datetime.now(timezone.utc)
+        app.market = type(
+            "Market",
+            (),
+            {
+                "slug": "btc-updown-5m-test",
+                "condition_id": None,
+                "yes_token_id": "Y",
+                "no_token_id": "N",
+                "tick_size": 0.01,
+                "start_time": now - timedelta(seconds=250),
+                "end_time": now + timedelta(seconds=20),
+            },
+        )()
+
+        class _StrategyCfg:
+            require_both_prices = True
+            max_entries_per_window = 2
+            max_flips_per_window = 1
+            allow_same_side_reentry = False
+            book_fallback_max_age_seconds = 3
+
+        class _ExecutionCfg:
+            mode = "live"
+            order_type = "FAK"
+            strategy_type = "main"
+            market_order_price_buffer = 0.01
+            market_order_price_buffer_step = 0.01
+            market_order_price_buffer_max = 0.05
+
+        class _LoggingCfg:
+            active_only_last_seconds = 60
+
+        class _Config:
+            strategy = _StrategyCfg()
+            execution = _ExecutionCfg()
+            logging = _LoggingCfg()
+
+        app.config = _Config()
+        app.state = RuntimeState(market=app.market, position=None, last_snapshot=None)
+        app.roll = type("Roll", (), {"open_price": 100.0, "last_price": 101.0, "latest_x": lambda self=None: 0.0})()
+        app.health = type("Health", (), {})()
+        app._latest_trade_imbalance = 0.0
+        app._latest_books = {
+            "Y": BestBidAsk(asset_id="Y", bid=0.45, ask=0.47, bid_size=100, ask_size=100, timestamp_ms=int(now.timestamp() * 1000), tick_size=0.01),
+            "N": BestBidAsk(asset_id="N", bid=0.53, ask=0.55, bid_size=100, ask_size=100, timestamp_ms=int(now.timestamp() * 1000), tick_size=0.01),
+        }
+        app._last_usable_books = {}
+        app._order_in_flight = False
+        app._inflight_since_ms = 0
+        app._inflight_context = ""
+        app._last_preopen_reconcile_ms = 0
+        app._window_stats = WindowStats()
+        app._window_entry_count = 0
+        app._window_flip_count = 0
+        app._seen_entry_sides = set()
+        app._last_status_second = None
+        app._last_wait_log_second = None
+        app._live_open_failures = {}
+        app._write_activity_event = lambda **kwargs: None
+        app._log_status = lambda now, snapshot: None
+        app._log_health = lambda now=None: None
+
+        snapshot = StrategySnapshot(
+            fair_yes=0.62,
+            fair_no=0.38,
+            yes_price=0.46,
+            no_price=0.54,
+            edge_yes=0.16,
+            edge_no=-0.16,
+            sigma_10=0.01,
+            sigma_30=0.01,
+            sigma_slow=0.01,
+            sigma_eff=0.01,
+            momentum_5=0.0,
+            momentum_15=0.0,
+            drift=0.0,
+            x_t=0.0,
+            tau_seconds=20,
+            jump_adjusted=False,
+            outlier_adjusted=False,
+        )
+
+        class FakeStrategy:
+            def compute_snapshot(self, **kwargs):
+                return snapshot
+
+            def evaluate(self, snapshot, yes_book, no_book, position):
+                return TradeSignal(SignalAction.OPEN, side=OutcomeSide.YES, size=1.0, reason="open", snapshot=snapshot)
+
+        class FakeExecutor:
+            def __init__(self):
+                self.submitted_prices = []
+                self.attempt = 0
+                self.last_report = None
+
+            def reconcile_position(self, market, local_position):
+                return None, True, "flat"
+
+            def open_position(self, market, signal, entry_price):
+                self.submitted_prices.append(entry_price)
+                self.attempt += 1
+                if self.attempt == 1:
+                    raise RuntimeError("no match")
+                self.last_report = {
+                    "success": True,
+                    "status": "filled",
+                    "requested_size": 1.0,
+                    "filled_size": 1.0,
+                    "avg_price": entry_price,
+                    "error": "",
+                    "raw": None,
+                }
+                return Position(side=signal.side, size=1.0, entry_price=entry_price, edge_at_entry=0.1, opened_at=now)
+
+        app.strategy = FakeStrategy()
+        app.executor = FakeExecutor()
+
+        app._tick()
+        app._tick()
+
+        self.assertEqual(app.executor.submitted_prices, [0.48, 0.49])
+        self.assertEqual(app._live_open_failures.get(OutcomeSide.YES, 0), 0)
+
+    def test_live_open_buffer_caps_at_maximum(self):
+        app = TradingApplication.__new__(TradingApplication)
+
+        class _ExecutionCfg:
+            market_order_price_buffer = 0.01
+            market_order_price_buffer_step = 0.01
+            market_order_price_buffer_max = 0.05
+
+        class _Config:
+            execution = _ExecutionCfg()
+
+        app.config = _Config()
+        app._live_open_failures = {OutcomeSide.YES: 10}
+
+        self.assertEqual(app._live_price_buffer_for(OutcomeSide.YES), 0.05)
 
 
 if __name__ == "__main__":
