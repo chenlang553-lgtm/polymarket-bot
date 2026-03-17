@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.25.12 - 2026-03-17
+
+- Reworked the WeCom monitor to report full-day summaries for yesterday and today instead of incremental 5-minute deltas
+- Added day-level metrics for PnL, fill count, traded-window count, largest winning window, and daily max drawdown
+- Added best-effort live account reporting for current USDC balance/allowance and the active window's conditional token balances
+
 ## v1.25.11 - 2026-03-17
 
 - Raised the default live `execution.market_order_price_buffer` from `0.001` to `0.05` to make FAK market orders substantially more aggressive

@@ -3,17 +3,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path("/root/polymarket_bot/src")))
+
+from polymarket_bot.config import MarketConfig
+from polymarket_bot.gamma import resolve_market
 
 from wecom_send import DEFAULT_CONFIG_PATH, get_access_token, load_config, send_text
 
 
 PROJECT_ROOT = Path("/root/polymarket_bot")
 TZ = datetime.now().astimezone().tzinfo or timezone.utc
+USDC_HOST = "https://clob.polymarket.com"
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -31,22 +38,14 @@ def _read_jsonl(path: Path) -> list[dict]:
     return records
 
 
-def _load_state(path: Path) -> dict:
-    if not path.exists():
-        return {"last_closed_at_ms": 0, "last_activity_at_ms": 0}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {"last_closed_at_ms": 0, "last_activity_at_ms": 0}
-
-
-def _save_state(path: Path, state: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 def _fmt_money(value: float) -> str:
     return f"{value:+.4f}"
+
+
+def _fmt_balance(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.4f}"
 
 
 def _fmt_time(ms: int | None) -> str:
@@ -86,45 +85,196 @@ def _latest_state_record(path: Path) -> dict | None:
     return None
 
 
-def _today_pnl(rows: list[dict]) -> float:
-    today = datetime.now(tz=TZ).date()
-    total = 0.0
-    for row in rows:
-        closed_at = row.get("closedAtMs")
-        if not closed_at:
-            continue
-        if datetime.fromtimestamp(closed_at / 1000.0, tz=TZ).date() == today:
-            total += float(row.get("realizedPnl", 0.0) or 0.0)
-    return total
+def _record_day(ms: int | None) -> date | None:
+    if not ms:
+        return None
+    return datetime.fromtimestamp(ms / 1000.0, tz=TZ).date()
 
 
-def _summarize(iteration: str, data_dir: Path, state: dict) -> tuple[str, dict]:
+def _extract_number(payload, keys: tuple[str, ...]) -> float | None:
+    if payload is None:
+        return None
+    if isinstance(payload, (int, float)):
+        return float(payload)
+    if isinstance(payload, str):
+        try:
+            return float(payload)
+        except ValueError:
+            return None
+    if isinstance(payload, list):
+        for item in payload:
+            value = _extract_number(item, keys)
+            if value is not None:
+                return value
+        return None
+    if isinstance(payload, dict):
+        for key in keys:
+            if key in payload:
+                value = _extract_number(payload.get(key), keys)
+                if value is not None:
+                    return value
+        for value in payload.values():
+            found = _extract_number(value, keys)
+            if found is not None:
+                return found
+    return None
+
+
+def _build_live_client():
+    private_key = str(os.getenv("POLYMARKET_PRIVATE_KEY", "")).strip()
+    if not private_key:
+        return None
+
+    from py_clob_client.client import ClobClient
+    from py_clob_client.clob_types import ApiCreds
+
+    funder = str(os.getenv("POLYMARKET_FUNDER", "")).strip() or None
+    signature_type = int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "2"))
+    chain_id = int(os.getenv("POLYMARKET_CHAIN_ID", "137"))
+    client = ClobClient(
+        USDC_HOST,
+        key=private_key,
+        chain_id=chain_id,
+        signature_type=signature_type,
+        funder=funder,
+    )
+
+    api_key = str(os.getenv("POLYMARKET_API_KEY", "")).strip()
+    api_secret = str(os.getenv("POLYMARKET_API_SECRET", "")).strip()
+    api_passphrase = str(os.getenv("POLYMARKET_API_PASSPHRASE", "")).strip()
+    if api_key and api_secret and api_passphrase:
+        client.set_api_creds(ApiCreds(api_key, api_secret, api_passphrase))
+    else:
+        client.set_api_creds(client.create_or_derive_api_creds())
+    return client
+
+
+def _fetch_account_snapshot(latest_state: dict | None) -> dict:
+    result = {
+        "usdc_balance": None,
+        "usdc_allowance": None,
+        "yes_balance": None,
+        "no_balance": None,
+    }
+    try:
+        client = _build_live_client()
+        if client is None:
+            return result
+
+        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+        collateral = client.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        )
+        result["usdc_balance"] = _extract_number(collateral, ("balance", "available", "amount", "size"))
+        result["usdc_allowance"] = _extract_number(collateral, ("allowance", "allowed", "approved"))
+
+        market_slug = None if latest_state is None else latest_state.get("marketSlug")
+        if not market_slug:
+            return result
+
+        market = resolve_market(MarketConfig(market_slug=market_slug))
+        yes_payload = client.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=market.yes_token_id)
+        )
+        no_payload = client.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=market.no_token_id)
+        )
+        result["yes_balance"] = _extract_number(yes_payload, ("balance", "available", "amount", "size"))
+        result["no_balance"] = _extract_number(no_payload, ("balance", "available", "amount", "size"))
+    except Exception:
+        return result
+    return result
+
+
+def _day_window_rows(rows: list[dict], target_day: date) -> list[dict]:
+    return [row for row in rows if _record_day(int(row.get("closedAtMs", 0) or 0)) == target_day]
+
+
+def _day_fill_rows(rows: list[dict], target_day: date) -> list[dict]:
+    return [
+        row
+        for row in rows
+        if row.get("eventType") == "fill"
+        and _record_day(int(row.get("eventAtMs", 0) or 0)) == target_day
+    ]
+
+
+def _max_drawdown(rows: list[dict]) -> float:
+    equity = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for row in sorted(rows, key=lambda item: int(item.get("closedAtMs", 0) or 0)):
+        equity += float(row.get("realizedPnl", 0.0) or 0.0)
+        peak = max(peak, equity)
+        max_dd = min(max_dd, equity - peak)
+    return max_dd
+
+
+def _day_stats(window_rows: list[dict], activity_rows: list[dict], target_day: date) -> dict:
+    day_windows = _day_window_rows(window_rows, target_day)
+    traded_windows = [row for row in day_windows if int(((row.get("activity") or {}).get("fillCount", 0))) > 0]
+    fills = _day_fill_rows(activity_rows, target_day)
+    pnls = [float(row.get("realizedPnl", 0.0) or 0.0) for row in traded_windows]
+    return {
+        "date": target_day,
+        "pnl": sum(float(row.get("realizedPnl", 0.0) or 0.0) for row in day_windows),
+        "fills": len(fills),
+        "traded_windows": len(traded_windows),
+        "max_profit": max(pnls) if pnls else 0.0,
+        "max_drawdown": _max_drawdown(day_windows),
+    }
+
+
+def _latest_traded_window(window_rows: list[dict]) -> dict | None:
+    traded = [row for row in window_rows if int(((row.get("activity") or {}).get("fillCount", 0))) > 0]
+    return traded[-1] if traded else None
+
+
+def _summarize(iteration: str, data_dir: Path) -> str:
     window_rows = sorted(_read_jsonl(data_dir / "window_close.jsonl"), key=lambda item: item.get("closedAtMs", 0))
     activity_rows = sorted(_read_jsonl(data_dir / "activity.jsonl"), key=lambda item: item.get("eventAtMs", 0))
     latest_state = _latest_state_record(data_dir / "market_state.jsonl")
 
-    new_windows = [row for row in window_rows if int(row.get("closedAtMs", 0)) > int(state.get("last_closed_at_ms", 0))]
-    new_activity = [row for row in activity_rows if int(row.get("eventAtMs", 0)) > int(state.get("last_activity_at_ms", 0))]
-    fill_rows = [row for row in new_activity if row.get("eventType") == "fill"]
-    execution_rows = [row for row in new_activity if row.get("eventType") == "execution"]
-    traded_new_windows = [row for row in new_windows if int(((row.get("activity") or {}).get("fillCount", 0))) > 0]
+    today = datetime.now(tz=TZ).date()
+    yesterday = today - timedelta(days=1)
+    yesterday_stats = _day_stats(window_rows, activity_rows, yesterday)
+    today_stats = _day_stats(window_rows, activity_rows, today)
 
-    delta_pnl = sum(float(row.get("realizedPnl", 0.0) or 0.0) for row in new_windows)
     total_pnl = sum(float(row.get("realizedPnl", 0.0) or 0.0) for row in window_rows)
-    today_pnl = _today_pnl(window_rows)
-
-    side_counter = Counter(row.get("side", "Unknown") for row in fill_rows)
-    fill_notional = sum(float(row.get("size", 0.0) or 0.0) * float(row.get("price", 0.0) or 0.0) for row in fill_rows)
-
-    latest_traded = traded_new_windows[-1] if traded_new_windows else None
+    side_counter = Counter(row.get("side", "Unknown") for row in activity_rows if row.get("eventType") == "fill")
+    latest_traded = _latest_traded_window(window_rows)
     latest_any = window_rows[-1] if window_rows else None
+    account = _fetch_account_snapshot(latest_state)
 
     lines = [
-        f"[{iteration}] 5分钟订单监督",
-        f"窗口增量: {len(new_windows)} | 交易窗口: {len(traded_new_windows)}",
-        f"新增fill: {len(fill_rows)} | 执行事件: {len(execution_rows)} | 新增成交额: {fill_notional:.4f}",
-        f"本轮PnL: {_fmt_money(delta_pnl)} | 累计PnL: {_fmt_money(total_pnl)} | 今日PnL: {_fmt_money(today_pnl)}",
-        f"方向分布: Up={side_counter.get('Up', 0)} Down={side_counter.get('Down', 0)}",
+        f"[{iteration}] 账户与订单监督",
+        "昨天: pnl={pnl} fills={fills} traded_windows={traded} max_win={max_win} max_dd={max_dd}".format(
+            pnl=_fmt_money(yesterday_stats["pnl"]),
+            fills=yesterday_stats["fills"],
+            traded=yesterday_stats["traded_windows"],
+            max_win=_fmt_money(yesterday_stats["max_profit"]),
+            max_dd=_fmt_money(yesterday_stats["max_drawdown"]),
+        ),
+        "今天: pnl={pnl} fills={fills} traded_windows={traded} max_win={max_win} max_dd={max_dd}".format(
+            pnl=_fmt_money(today_stats["pnl"]),
+            fills=today_stats["fills"],
+            traded=today_stats["traded_windows"],
+            max_win=_fmt_money(today_stats["max_profit"]),
+            max_dd=_fmt_money(today_stats["max_drawdown"]),
+        ),
+        "累计PnL: {pnl} | 总fills: {fills} | 方向分布: Up={up} Down={down}".format(
+            pnl=_fmt_money(total_pnl),
+            fills=sum(1 for row in activity_rows if row.get("eventType") == "fill"),
+            up=side_counter.get("Up", 0),
+            down=side_counter.get("Down", 0),
+        ),
+        "账户余额: usdc={usdc} allowance={allowance} | 当前资产: Up={up} Down={down}".format(
+            usdc=_fmt_balance(account.get("usdc_balance")),
+            allowance=_fmt_balance(account.get("usdc_allowance")),
+            up=_fmt_balance(account.get("yes_balance")),
+            down=_fmt_balance(account.get("no_balance")),
+        ),
     ]
 
     if latest_traded is not None:
@@ -159,16 +309,11 @@ def _summarize(iteration: str, data_dir: Path, state: dict) -> tuple[str, dict]:
         )
 
     lines.append(f"统计时间: {_fmt_time(int(time.time() * 1000))}")
-
-    next_state = {
-        "last_closed_at_ms": max([int(state.get("last_closed_at_ms", 0))] + [int(row.get("closedAtMs", 0)) for row in new_windows]),
-        "last_activity_at_ms": max([int(state.get("last_activity_at_ms", 0))] + [int(row.get("eventAtMs", 0)) for row in new_activity]),
-    }
-    return "\n".join(lines), next_state
+    return "\n".join(lines)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Send 5-minute live trading summaries to WeCom")
+    parser = argparse.ArgumentParser(description="Send account and trading summaries to WeCom")
     parser.add_argument("iteration")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--interval", type=int, default=0, help="Seconds between pushes, 0 means use config")
@@ -180,7 +325,6 @@ def main() -> int:
     args = parse_args()
     config = load_config(args.config)
     data_dir = PROJECT_ROOT / "data" / args.iteration
-    state_path = PROJECT_ROOT / ".runtime" / f"monitor_{args.iteration}.json"
     interval = int(args.interval or config.get("monitor", {}).get("interval_seconds", 300))
 
     if not data_dir.exists():
@@ -188,10 +332,8 @@ def main() -> int:
         return 1
 
     while True:
-        state = _load_state(state_path)
-        content, next_state = _summarize(args.iteration, data_dir, state)
+        content = _summarize(args.iteration, data_dir)
         _send_wecom(content, config)
-        _save_state(state_path, next_state)
         if args.once:
             return 0
         time.sleep(max(60, interval))
